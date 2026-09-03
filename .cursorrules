@@ -1,0 +1,25 @@
+# CLINIC STUDIO - SYSTEM & BEHAVIORAL RULES
+
+## I. Karpathy Engineering Principles
+1. Think Before Coding: State assumptions explicitly. If ambiguous, ask. Recommend simpler approaches when available.
+2. Simplicity First: Minimum viable code. No speculative abstractions, unnecessary patterns, or bloated helper files.
+3. Surgical Changes: Touch ONLY relevant files. Do not refactor adjacent code or format unrelated files.
+4. Goal-Driven Execution: Provide concrete verification steps (curl, DB query, UI check) to confirm code works.
+
+## II. Project Context & Local Storage
+- Local Base: D:\ClinicStudio\
+  - Raw footage: D:\ClinicStudio\raw\
+  - Reference hits: D:\ClinicStudio\references\
+  - Rendered drafts: D:\ClinicStudio\outputs\
+  - SQLite Database: D:\ClinicStudio\db\studio.db
+
+## III. Tech Stack
+- Backend: Python 3.10+, FastAPI, FFmpeg-python, SQLite.
+- Frontend: Next.js (App Router), Tailwind CSS, Lucide React.
+- Vision AI: Google Gemini API (raw video analysis & scene tagging).
+- Copywriting AI: Anthropic Claude API (Hebrew copywriting, hooks, local SEO captions).
+
+## IV. Conventions
+- Modular backend: /backend/services/ for AI/video, /backend/routers/ for endpoints.
+- UI: Clean, luxury esthetician theme with 1-click workflows.
+- Security: Never hardcode API keys. Always use local .env.

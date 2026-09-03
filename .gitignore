@@ -1,0 +1,13 @@
+raw/
+outputs/
+references/
+db/
+*.db
+*.sqlite
+.env
+.env.local
+node_modules/
+__pycache__/
+.next/
+dist/
+build/
