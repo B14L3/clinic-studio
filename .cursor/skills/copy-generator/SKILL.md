@@ -5,7 +5,7 @@ description: Generate localized Hebrew hooks, captions, and city hashtags using 
 
 # Hebrew Copywriter Playbook
 
-When generating social copy via Claude API:
+When generating social copy via Claude API, use model `claude-sonnet-4-6` (or `claude-haiku-4-5-20251001` for lightweight/low-latency JSON generation):
 1. Target Audience: Local Israeli women looking for professional skincare/esthetics treatments.
 2. Tone of Voice: Professional, warm, clean, no cheap sales hype or tacky emojis.
 3. Required Output Format (Strict JSON):

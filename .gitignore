@@ -8,6 +8,8 @@ db/
 .env.local
 node_modules/
 __pycache__/
+venv/
+.venv/
 .next/
 dist/
 build/

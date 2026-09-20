@@ -16,8 +16,8 @@
 ## III. Tech Stack
 - Backend: Python 3.10+, FastAPI, FFmpeg-python, SQLite.
 - Frontend: Next.js (App Router), Tailwind CSS, Lucide React.
-- Vision AI: Google Gemini API (raw video analysis & scene tagging).
-- Copywriting AI: Anthropic Claude API (Hebrew copywriting, hooks, local SEO captions).
+- Vision AI: Google Gemini API, model `gemini-3.6-flash` (raw video analysis, scene tagging & blueprint extraction). Pro tier (`gemini-3.1-pro`, aliased by `gemini-3.6-pro`/`gemini-2.5-pro`/`gemini-pro-latest`) is preferred for blueprint extraction when active on the billing plan — currently blocked by a 0-quota free-tier limit on this key, so `gemini-3.6-flash` is the live fallback. Re-check availability if billing changes.
+- Copywriting AI: Anthropic Claude API, model `claude-sonnet-4-6` (Hebrew copywriting, hooks, local SEO captions); use `claude-haiku-4-5-20251001` for lightweight/low-latency tasks.
 
 ## IV. Conventions
 - Modular backend: /backend/services/ for AI/video, /backend/routers/ for endpoints.

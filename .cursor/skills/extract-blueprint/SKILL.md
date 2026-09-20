@@ -6,7 +6,7 @@ description: Analyze reference viral reels via Gemini Vision to create timing an
 # Video Blueprint Extractor Playbook
 
 When extracting blueprints from reference videos in \D:\ClinicStudio\references\:
-1. Use Google Gemini 1.5 Pro API multimodal capabilities (pass raw MP4 directly).
+1. Use Google Gemini API multimodal capabilities (pass raw MP4 directly). Prefer the Pro tier (`gemini-3.1-pro`, aliased by `gemini-3.6-pro`/`gemini-2.5-pro`/`gemini-pro-latest`) for best video reasoning quality; fall back to `gemini-3.6-flash` if the Pro tier returns a quota/billing error (429 RESOURCE_EXHAUSTED) or a 404 on the current API key.
 2. Prompt Gemini to return STRICT JSON with this schema:
    \\\json
    {
