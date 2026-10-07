@@ -45,6 +45,54 @@ def init_db() -> None:
         conn.close()
 
 
+DEFAULT_RULES: list[tuple[str, str]] = [
+    (
+        "tone",
+        "Warm, professional, medical-esthetic authority, inviting, no aggressive sales jargon.",
+    ),
+    (
+        "language",
+        "Natural Israeli Hebrew (עברית טבעית ולא תרגום מכונה), feminine/neutral addressing "
+        "where appropriate.",
+    ),
+    (
+        "structure",
+        "Hook (1-3s attention grabber), Value/Process (what the treatment solves), Result, "
+        "and CTA (Direct message / booking link).",
+    ),
+    (
+        "restrictions",
+        'No unrealistic medical promises (e.g. "מעלים קמטים לתמיד"), focus on skin health, '
+        "glow, and rejuvenation.",
+    ),
+]
+
+
+def seed_rules() -> int:
+    """Populate the rules table with default marketing guidelines if it's empty.
+
+    Returns the number of rows inserted (0 if rules already exist).
+    """
+    conn = get_connection()
+    try:
+        (count,) = conn.execute("SELECT COUNT(*) FROM rules").fetchone()
+        if count > 0:
+            return 0
+        conn.executemany(
+            "INSERT INTO rules (rule_text, category) VALUES (?, ?)",
+            [(rule_text, category) for category, rule_text in DEFAULT_RULES],
+        )
+        conn.commit()
+        return len(DEFAULT_RULES)
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     init_db()
     print(f"Database ready at {DB_PATH}")
+    inserted = seed_rules()
+    if inserted:
+        print(f"Seeded {inserted} default rule(s) into the rules table.")
+    else:
+        print("rules table already has data; skipped seeding.")
