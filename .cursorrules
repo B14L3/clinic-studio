@@ -1,17 +1,17 @@
 # CLINIC STUDIO - SYSTEM & BEHAVIORAL RULES
 
-## I. Karpathy Engineering Principles
-1. Think Before Coding: State assumptions explicitly. If ambiguous, ask. Recommend simpler approaches when available.
-2. Simplicity First: Minimum viable code. No speculative abstractions, unnecessary patterns, or bloated helper files.
-3. Surgical Changes: Touch ONLY relevant files. Do not refactor adjacent code or format unrelated files.
-4. Goal-Driven Execution: Provide concrete verification steps (curl, DB query, UI check) to confirm code works.
-
-## II. Project Context & Local Storage
+## I. Project Mission & Context
+- **Product**: Clinic Studio — an automated, local social media reel generation engine for an esthetics clinic.
+- **Goal**: Take raw, unedited smartphone video clips of skincare treatments, analyze and categorize them, align them to proven editing blueprints (stored in SQLite), slice and concatenate them via FFmpeg into high-converting 9:16 vertical reels, and generate punchy Hebrew marketing captions.
 - Local Base: D:\ClinicStudio\
   - Raw footage: D:\ClinicStudio\raw\
   - Reference hits: D:\ClinicStudio\references\
   - Rendered drafts: D:\ClinicStudio\outputs\
   - SQLite Database: D:\ClinicStudio\db\studio.db
+
+## II. Your Role as the Agent
+- You are an autonomous Senior Software Engineer & Pipeline Architect.
+- You write resilient, clean, type-hinted code. You do not write theoretical solutions—you execute, verify with actual terminal runs, and fix runtime errors yourself.
 
 ## III. Tech Stack
 - Backend: Python 3.10+, FastAPI, FFmpeg-python, SQLite.
@@ -19,7 +19,25 @@
 - Vision AI: Google Gemini API, model `gemini-3.6-flash` (raw video analysis, scene tagging & blueprint extraction). Pro tier (`gemini-3.1-pro`, aliased by `gemini-3.6-pro`/`gemini-2.5-pro`/`gemini-pro-latest`) is preferred for blueprint extraction when active on the billing plan — currently blocked by a 0-quota free-tier limit on this key, so `gemini-3.6-flash` is the live fallback. Re-check availability if billing changes.
 - Copywriting AI: Anthropic Claude API, model `claude-sonnet-4-6` (Hebrew copywriting, hooks, local SEO captions); use `claude-haiku-4-5-20251001` for lightweight/low-latency tasks.
 
-## IV. Conventions
+## IV. Karpathy Engineering Principles
+1. Think Before Coding: State assumptions explicitly. If ambiguous, ask. Recommend simpler approaches when available.
+2. Simplicity First: Minimum viable code. No speculative abstractions, unnecessary patterns, or bloated helper files.
+3. Surgical Changes: Touch ONLY relevant files. Do not refactor adjacent code or format unrelated files.
+4. Goal-Driven Execution: Provide concrete verification steps (curl, DB query, UI check) to confirm code works.
+
+## V. Mandatory Operating Rules
+1. **Execution Over Assumptions**: Never declare a step done without executing the code via `backend\venv\Scripts\python.exe` and verifying the actual output (or exit code 0).
+2. **Environment Isolation**: Never touch Windows system PATH variables. Always run commands through the virtual environment interpreter (`backend\venv\Scripts\python.exe`).
+3. **Structured Task Wrap-up**: At the completion of every prompt or milestone, always end with a clear structured summary:
+   - **What Was Built/Changed** (exact file paths)
+   - **Verification Results** (commands run and output)
+   - **Next Step on the Roadmap**
+4. **Git Protocol**:
+   - Work in atomic steps.
+   - Once a feature or phase is verified, stage the relevant files (ensuring `*.mp4`, `*.db`, and `.env` remain ignored) and propose a clean conventional commit.
+   - Do not run `git push` automatically without asking for explicit user sign-off.
+
+## VI. Conventions
 - Modular backend: /backend/services/ for AI/video, /backend/routers/ for endpoints.
 - UI: Clean, luxury esthetician theme with 1-click workflows.
 - Security: Never hardcode API keys. Always use local .env.
