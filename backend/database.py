@@ -25,6 +25,7 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 category TEXT NOT NULL,
                 data_json TEXT NOT NULL,
+                source_file TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -41,6 +42,15 @@ def init_db() -> None:
             """
         )
         conn.commit()
+
+        # Migration: pre-existing DBs created before this column existed won't
+        # have it from CREATE TABLE IF NOT EXISTS above. Dedup must key off the
+        # raw source filename, not `name` (which may now hold a human-readable
+        # title), so backfill the column here if it's missing.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(blueprints)")}
+        if "source_file" not in columns:
+            conn.execute("ALTER TABLE blueprints ADD COLUMN source_file TEXT")
+            conn.commit()
     finally:
         conn.close()
 
@@ -110,6 +120,30 @@ def rename_blueprints() -> int:
         conn.close()
 
 
+BLUEPRINT_SOURCE_FILES: dict[int, str] = {
+    1: "copy_C9E6677C-B027-40FA-81B1-64C1BCD9FB67.mp4",
+    2: "עותק של לה פונטן.mp4",
+}
+
+
+def backfill_source_files() -> int:
+    """Populate source_file for legacy rows inserted before the column existed."""
+    conn = get_connection()
+    try:
+        updated = 0
+        for blueprint_id, source_file in BLUEPRINT_SOURCE_FILES.items():
+            cur = conn.execute(
+                "UPDATE blueprints SET source_file = ? "
+                "WHERE id = ? AND (source_file IS NULL OR source_file = '')",
+                (source_file, blueprint_id),
+            )
+            updated += cur.rowcount
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     init_db()
     print(f"Database ready at {DB_PATH}")
@@ -121,3 +155,6 @@ if __name__ == "__main__":
 
     renamed = rename_blueprints()
     print(f"Renamed {renamed} blueprint(s).")
+
+    backfilled = backfill_source_files()
+    print(f"Backfilled source_file for {backfilled} legacy blueprint(s).")

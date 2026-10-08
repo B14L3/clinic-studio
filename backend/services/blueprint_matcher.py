@@ -151,6 +151,11 @@ def recommend_blueprint_for_clip(source_path: Path) -> BlueprintMatch:
         print(f"  Cleaned up uploaded file {uploaded.name}")
 
 
+def recommend_blueprint(source_video_path: str) -> BlueprintMatch:
+    """String-path wrapper around recommend_blueprint_for_clip, for API consumers."""
+    return recommend_blueprint_for_clip(Path(source_video_path))
+
+
 if __name__ == "__main__":
     import argparse
 

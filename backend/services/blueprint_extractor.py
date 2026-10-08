@@ -127,25 +127,35 @@ def extract_blueprint(client: genai.Client, uploaded: types.File) -> Blueprint:
     raise last_error
 
 
-def already_saved(name: str, category: str) -> bool:
-    """Check whether a blueprint for this name+category is already in SQLite."""
+def already_saved(source_file: str, category: str) -> bool:
+    """Check whether a blueprint for this raw source file is already in SQLite.
+
+    Keys off `source_file` (the raw filename), not `name` (which may now hold a
+    human-readable title set via a rename migration or by Gemini itself).
+    """
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT id FROM blueprints WHERE name = ? AND category = ?",
-            (name, category),
+            "SELECT id FROM blueprints WHERE source_file = ? AND category = ?",
+            (source_file, category),
         ).fetchone()
         return row is not None
     finally:
         conn.close()
 
 
-def save_blueprint(name: str, category: str, blueprint: Blueprint) -> None:
+def save_blueprint(source_file: str, category: str, blueprint: Blueprint) -> None:
+    """Insert or update a blueprint, matched by source_file+category.
+
+    On insert, `name` is set from Gemini's own `blueprint_name` suggestion
+    (not the raw filename). On update, the existing `name` is left untouched
+    so manual renames survive re-extraction.
+    """
     conn = get_connection()
     try:
         existing = conn.execute(
-            "SELECT id FROM blueprints WHERE name = ? AND category = ?",
-            (name, category),
+            "SELECT id FROM blueprints WHERE source_file = ? AND category = ?",
+            (source_file, category),
         ).fetchone()
         data_json = blueprint.model_dump_json()
         if existing:
@@ -155,8 +165,8 @@ def save_blueprint(name: str, category: str, blueprint: Blueprint) -> None:
             )
         else:
             conn.execute(
-                "INSERT INTO blueprints (name, category, data_json) VALUES (?, ?, ?)",
-                (name, category, data_json),
+                "INSERT INTO blueprints (name, category, data_json, source_file) VALUES (?, ?, ?, ?)",
+                (blueprint.blueprint_name, category, data_json, source_file),
             )
         conn.commit()
     finally:

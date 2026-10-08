@@ -13,6 +13,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 from database import get_connection  # noqa: E402
+from services.blueprint_matcher import recommend_blueprint  # noqa: E402
 from services.copy_generator import generate_reel_copy  # noqa: E402
 from services.video_engine import OUTPUT_DIR, render_blueprint_test  # noqa: E402
 
@@ -44,6 +45,26 @@ class GenerateReelResponse(BaseModel):
     copywriting: CopyPayload
 
 
+class AnalyzeReelRequest(BaseModel):
+    source_video_path: str
+
+
+class BlueprintOption(BaseModel):
+    id: int
+    name: str
+    category: str
+    duration: Optional[float] = None
+    segment_count: int
+
+
+class AnalyzeReelResponse(BaseModel):
+    recommended_blueprint_id: int
+    blueprint_name: str
+    confidence: float
+    reasoning: str
+    blueprints: list[BlueprintOption]
+
+
 @router.get("/blueprints")
 def list_blueprints():
     """Return all extracted blueprints: id, name, category, duration, segment count."""
@@ -68,6 +89,26 @@ def list_blueprints():
             }
         )
     return result
+
+
+@router.post("/reels/analyze", response_model=AnalyzeReelResponse)
+def analyze_reel(req: AnalyzeReelRequest):
+    """Analyze a raw clip via Gemini and recommend the best-fit blueprint,
+    returning the full blueprint list too so the frontend can override it."""
+    source_path = _resolve_source_path(req.source_video_path)
+
+    try:
+        match = recommend_blueprint(str(source_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Blueprint matching failed: {e}") from e
+
+    return AnalyzeReelResponse(
+        recommended_blueprint_id=match.recommended_blueprint_id,
+        blueprint_name=match.blueprint_name,
+        confidence=match.confidence,
+        reasoning=match.reasoning,
+        blueprints=[BlueprintOption(**b) for b in list_blueprints()],
+    )
 
 
 @router.get("/rules")
