@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Sparkles,
   Loader2,
@@ -58,7 +58,6 @@ export default function StudioDashboard() {
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [accordionOpen, setAccordionOpen] = useState(false);
   const [rawClips, setRawClips] = useState<RawClip[]>([]);
 
@@ -190,20 +189,30 @@ export default function StudioDashboard() {
           <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">שלב 1 · קליפ מקור</h2>
 
           <input
-            ref={fileInputRef}
+            id="raw-clip-file-input"
             type="file"
             accept="video/*,video/mp4,video/quicktime"
             data-testid="file-input"
             className="hidden"
+            disabled={uploading}
             onChange={handleFileSelect}
           />
 
-          <button
-            type="button"
+          {/*
+            A native <label for=...> is used instead of a button that proxies
+            a programmatic .click() on the hidden input. iOS Safari frequently
+            refuses to open the native photo/file picker when .click() is
+            called via JS on a display:none input, even from a real tap
+            handler — but tapping a label associated with a file input is
+            spec-guaranteed to activate it on every browser, including iOS.
+          */}
+          <label
+            htmlFor="raw-clip-file-input"
             data-testid="upload-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50/50 py-8 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition"
+            aria-disabled={uploading}
+            className={`w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50/50 py-8 text-rose-600 font-medium transition ${
+              uploading ? "opacity-50 pointer-events-none" : "cursor-pointer hover:bg-rose-50"
+            }`}
           >
             {uploading ? (
               <>
@@ -216,7 +225,7 @@ export default function StudioDashboard() {
                 <span>Select Video from Device / Photo Library</span>
               </>
             )}
-          </button>
+          </label>
 
           {uploadError && (
             <p className="text-sm text-red-500 flex items-center gap-1.5">
