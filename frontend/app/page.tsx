@@ -1,16 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Sparkles, Loader2, Copy, Check, Video, AlertCircle } from "lucide-react";
+import { useState } from "react";
+import {
+  Sparkles,
+  Loader2,
+  Copy,
+  Check,
+  Video,
+  AlertCircle,
+  ScanSearch,
+} from "lucide-react";
 
 const API_BASE = "http://localhost:8000";
 
-interface Blueprint {
+interface BlueprintOption {
   id: number;
   name: string;
   category: string;
   duration: number;
   segment_count: number;
+}
+
+interface AnalyzeResponse {
+  recommended_blueprint_id: number;
+  blueprint_name: string;
+  confidence: number;
+  reasoning: string;
+  blueprints: BlueprintOption[];
 }
 
 interface ReelCopy {
@@ -30,30 +46,50 @@ interface GenerateResponse {
 }
 
 export default function StudioDashboard() {
-  const [blueprints, setBlueprints] = useState<Blueprint[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Step 1: source footage
   const [sourcePath, setSourcePath] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  // Step 2: AI recommendation + blueprint list/selection
+  const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // Step 3: treatment details + generate
   const [treatment, setTreatment] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Step 4: output
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/api/blueprints`)
-      .then((r) => r.json())
-      .then((data: Blueprint[]) => {
-        setBlueprints(data);
-        if (data.length > 0) selectBlueprint(data[0]);
-      })
-      .catch(() => setError("לא ניתן להתחבר לשרת ה-API. ודאי ש-uvicorn פועל על פורט 8000."));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function selectBlueprint(bp: Blueprint) {
-    setSelectedId(bp.id);
-    setSourcePath(`references/${bp.category}/${bp.name}`);
+  async function handleAnalyze() {
+    if (!sourcePath) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    setAnalysis(null);
+    setSelectedId(null);
+    setResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/reels/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_video_path: sourcePath }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "שגיאה בניתוח הקליפ");
+      }
+      const data: AnalyzeResponse = await res.json();
+      setAnalysis(data);
+      setSelectedId(data.recommended_blueprint_id);
+    } catch (e) {
+      setAnalyzeError(e instanceof Error ? e.message : "משהו השתבש");
+    } finally {
+      setAnalyzing(false);
+    }
   }
 
   async function handleGenerate() {
@@ -100,50 +136,120 @@ export default function StudioDashboard() {
             Clinic Studio — יצירת ריל אוטומטית
           </h1>
           <p className="text-sm text-zinc-500">
-            בחרי בלופרינט, הזיני את פרטי הטיפול, וצרי ריל מוכן תוך דקות.
+            העלי נתיב לקליפ מקור, קבלי בלופרינט מומלץ מה-AI, והרכיבי ריל מוכן תוך דקות.
           </p>
         </header>
 
-        <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-5">
-          <div data-testid="blueprint-selection">
-            <label className="block text-sm font-medium mb-2">בחירת בלופרינט</label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {blueprints.map((bp) => (
-                <button
-                  key={bp.id}
-                  type="button"
-                  onClick={() => selectBlueprint(bp)}
-                  className={`text-right rounded-xl border p-4 transition ${
-                    selectedId === bp.id
-                      ? "border-rose-400 bg-rose-50"
-                      : "border-zinc-200 hover:border-zinc-300"
-                  }`}
-                >
-                  <div className="font-medium truncate">{bp.name}</div>
-                  <div className="text-xs text-zinc-500 mt-1">
-                    {bp.category} · {bp.duration}s · {bp.segment_count} קאטים
-                  </div>
-                </button>
-              ))}
-              {blueprints.length === 0 && !error && (
-                <p className="text-sm text-zinc-400 col-span-2">טוען בלופרינטים...</p>
-              )}
-            </div>
-          </div>
-
+        {/* Step 1: Source Footage */}
+        <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-4">
+          <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">שלב 1 · קליפ מקור</h2>
           <div>
             <label className="block text-sm font-medium mb-1">נתיב קליפ מקור</label>
             <input
+              data-testid="source-path-input"
               value={sourcePath}
               onChange={(e) => setSourcePath(e.target.value)}
               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
               placeholder="references/treatment_flow/clip.mp4"
             />
+            <p className="text-xs text-zinc-400 mt-1">
+              נתיב מקומי יחסי ל- D:\ClinicStudio, לדוגמה references/treatment_flow/clip.mp4
+            </p>
           </div>
+          <button
+            type="button"
+            data-testid="analyze-button"
+            onClick={handleAnalyze}
+            disabled={analyzing || !sourcePath}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-500 text-white py-3 font-medium disabled:opacity-40 hover:bg-rose-600 transition"
+          >
+            {analyzing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> מנתחת קליפ עם AI...
+              </>
+            ) : (
+              <>
+                <ScanSearch className="w-4 h-4" /> Analyze Footage with AI
+              </>
+            )}
+          </button>
+          {analyzeError && (
+            <p className="text-sm text-red-500 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4" /> {analyzeError}
+            </p>
+          )}
+        </section>
+
+        {/* Step 2: AI Recommendation & blueprint selection */}
+        <section
+          data-testid="blueprint-selection"
+          className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-5"
+        >
+          <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">
+            שלב 2 · המלצת AI ובחירת בלופרינט
+          </h2>
+
+          {analysis ? (
+            <>
+              <div
+                data-testid="ai-recommendation-card"
+                className="rounded-xl border border-rose-200 bg-rose-50 p-4 space-y-2"
+              >
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-100 rounded-full px-2 py-0.5">
+                  <Sparkles className="w-3 h-3" /> AI Recommended
+                </span>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">{analysis.blueprint_name}</span>
+                  <span className="text-xs text-zinc-500 shrink-0">
+                    {Math.round(analysis.confidence * 100)}% ביטחון
+                  </span>
+                </div>
+                <p dir="rtl" data-testid="ai-reasoning" className="text-sm text-zinc-600">
+                  {analysis.reasoning}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {analysis.blueprints.map((bp) => (
+                  <button
+                    key={bp.id}
+                    type="button"
+                    data-testid={`blueprint-card-${bp.id}`}
+                    onClick={() => setSelectedId(bp.id)}
+                    className={`text-right rounded-xl border p-4 transition ${
+                      selectedId === bp.id
+                        ? "border-rose-400 bg-rose-50"
+                        : "border-zinc-200 hover:border-zinc-300"
+                    }`}
+                  >
+                    <div className="font-medium truncate flex items-center gap-1.5">
+                      {bp.name}
+                      {bp.id === analysis.recommended_blueprint_id && (
+                        <Sparkles className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                      )}
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-1">
+                      {bp.category} · {bp.duration}s · {bp.segment_count} קאטים
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-400">
+              נתחי קליפ מקור כדי לקבל המלצת AI ולבחור בלופרינט.
+            </p>
+          )}
+        </section>
+
+        {/* Step 3: Treatment details + generate */}
+        <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-5">
+          <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">שלב 3 · פרטי טיפול והפקה</h2>
 
           <div>
             <label className="block text-sm font-medium mb-1">סוג טיפול</label>
             <input
+              data-testid="treatment-input"
               value={treatment}
               onChange={(e) => setTreatment(e.target.value)}
               className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
@@ -154,6 +260,7 @@ export default function StudioDashboard() {
           <div>
             <label className="block text-sm font-medium mb-1">הערות נוספות (אופציונלי)</label>
             <textarea
+              data-testid="notes-input"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
@@ -186,8 +293,12 @@ export default function StudioDashboard() {
           )}
         </section>
 
+        {/* Step 4: Output & copy */}
         {result && (
-          <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6">
+          <section
+            data-testid="result-section"
+            className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6"
+          >
             <div className="flex flex-col sm:flex-row gap-6">
               <video
                 src={`${API_BASE}${result.video_url}`}
