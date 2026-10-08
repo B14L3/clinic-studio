@@ -13,8 +13,6 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-const API_BASE = "http://localhost:8000";
-
 interface BlueprintOption {
   id: number;
   name: string;
@@ -80,7 +78,7 @@ export default function StudioDashboard() {
 
   useEffect(() => {
     if (!accordionOpen) return;
-    fetch(`${API_BASE}/api/raw-clips`)
+    fetch("/api/raw-clips")
       .then((r) => r.json())
       .then((data: RawClip[]) => setRawClips(data))
       .catch(() => setRawClips([]));
@@ -95,7 +93,7 @@ export default function StudioDashboard() {
     setSelectedId(null);
     setResult(null);
     try {
-      const res = await fetch(`${API_BASE}/api/reels/analyze`, {
+      const res = await fetch("/api/reels/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source_video_path: path }),
@@ -124,7 +122,7 @@ export default function StudioDashboard() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: formData });
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || "העלאת הקובץ נכשלה");
@@ -145,7 +143,7 @@ export default function StudioDashboard() {
     setError(null);
     setResult(null);
     try {
-      const res = await fetch(`${API_BASE}/api/reels/generate`, {
+      const res = await fetch("/api/reels/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -434,7 +432,7 @@ export default function StudioDashboard() {
           >
             <div className="flex flex-col sm:flex-row gap-6">
               <video
-                src={`${API_BASE}${result.video_url}`}
+                src={result.video_url}
                 controls
                 className="w-full sm:w-[220px] aspect-[9/16] rounded-xl bg-black object-cover shrink-0"
               />

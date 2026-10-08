@@ -16,8 +16,12 @@ app = FastAPI(title="Clinic Studio API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    # Wildcard for local LAN dev (e.g. a phone on the same Wi-Fi hitting
+    # http://<lan-ip>:3000, which the Next.js dev server proxies here).
+    # No cookies/credentialed requests are used anywhere in this app, so a
+    # wildcard origin is safe without allow_credentials.
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
