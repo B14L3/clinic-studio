@@ -105,7 +105,7 @@ export default function StudioDashboard() {
         </header>
 
         <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-5">
-          <div>
+          <div data-testid="blueprint-selection">
             <label className="block text-sm font-medium mb-2">בחירת בלופרינט</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {blueprints.map((bp) => (
@@ -163,6 +163,7 @@ export default function StudioDashboard() {
 
           <button
             type="button"
+            data-testid="generate-button"
             onClick={handleGenerate}
             disabled={loading || !selectedId || !treatment}
             className="w-full flex items-center justify-center gap-2 rounded-xl bg-zinc-900 text-white py-3 font-medium disabled:opacity-40 hover:bg-zinc-800 transition"

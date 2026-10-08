@@ -36,6 +36,7 @@
    - Work in atomic steps.
    - Once a feature or phase is verified, stage the relevant files (ensuring `*.mp4`, `*.db`, and `.env` remain ignored) and propose a clean conventional commit.
    - Do not run `git push` automatically without asking for explicit user sign-off.
+5. **Autonomous UI Testing**: Whenever UI changes are made, run `npm run test:e2e` from `frontend/` to verify in headless Chromium before reporting completion.
 
 ## VI. Conventions
 - Modular backend: /backend/services/ for AI/video, /backend/routers/ for endpoints.
