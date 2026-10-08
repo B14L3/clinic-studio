@@ -1,12 +1,14 @@
-"""Reel pipeline endpoints: blueprints, rules, and end-to-end reel generation."""
+"""Reel pipeline endpoints: blueprints, rules, uploads, and end-to-end reel generation."""
 import json
+import re
 import subprocess
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -18,6 +20,9 @@ from services.copy_generator import generate_reel_copy  # noqa: E402
 from services.video_engine import OUTPUT_DIR, render_blueprint_test  # noqa: E402
 
 CLINIC_STUDIO_ROOT = Path(r"D:\ClinicStudio")
+RAW_CLIPS_DIR = CLINIC_STUDIO_ROOT / "raw_clips"
+RAW_CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_UPLOAD_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 
 router = APIRouter()
 
@@ -63,6 +68,62 @@ class AnalyzeReelResponse(BaseModel):
     confidence: float
     reasoning: str
     blueprints: list[BlueprintOption]
+
+
+class UploadResponse(BaseModel):
+    filename: str
+    file_path: str
+    size_mb: float
+
+
+def _sanitize_filename(name: str) -> str:
+    """Strip path separators and keep only safe filename characters."""
+    base = Path(name).name
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    return safe or "clip"
+
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_raw_clip(file: UploadFile = File(...)):
+    """Accept a raw video upload (mobile camera roll or local file) and store it in raw_clips/."""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Allowed: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}",
+        )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = _sanitize_filename(file.filename or "clip")
+    filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{safe_name}"
+    dest_path = RAW_CLIPS_DIR / filename
+
+    size_bytes = 0
+    with open(dest_path, "wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            out.write(chunk)
+            size_bytes += len(chunk)
+
+    return UploadResponse(
+        filename=filename,
+        file_path=f"raw_clips/{filename}",
+        size_mb=round(size_bytes / (1024 * 1024), 2),
+    )
+
+
+@router.get("/raw-clips", response_model=list[UploadResponse])
+def list_raw_clips():
+    """List previously uploaded raw clips in raw_clips/, newest first."""
+    files = sorted(RAW_CLIPS_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [
+        UploadResponse(
+            filename=f.name,
+            file_path=f"raw_clips/{f.name}",
+            size_mb=round(f.stat().st_size / (1024 * 1024), 2),
+        )
+        for f in files
+        if f.is_file()
+    ]
 
 
 @router.get("/blueprints")

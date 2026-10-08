@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Sparkles,
   Loader2,
@@ -9,6 +9,8 @@ import {
   Video,
   AlertCircle,
   ScanSearch,
+  UploadCloud,
+  ChevronDown,
 } from "lucide-react";
 
 const API_BASE = "http://localhost:8000";
@@ -19,6 +21,12 @@ interface BlueprintOption {
   category: string;
   duration: number;
   segment_count: number;
+}
+
+interface RawClip {
+  filename: string;
+  file_path: string;
+  size_mb: number;
 }
 
 interface AnalyzeResponse {
@@ -50,6 +58,11 @@ export default function StudioDashboard() {
   const [sourcePath, setSourcePath] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [accordionOpen, setAccordionOpen] = useState(false);
+  const [rawClips, setRawClips] = useState<RawClip[]>([]);
 
   // Step 2: AI recommendation + blueprint list/selection
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
@@ -65,8 +78,17 @@ export default function StudioDashboard() {
   const [result, setResult] = useState<GenerateResponse | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  async function handleAnalyze() {
-    if (!sourcePath) return;
+  useEffect(() => {
+    if (!accordionOpen) return;
+    fetch(`${API_BASE}/api/raw-clips`)
+      .then((r) => r.json())
+      .then((data: RawClip[]) => setRawClips(data))
+      .catch(() => setRawClips([]));
+  }, [accordionOpen]);
+
+  async function handleAnalyze(pathOverride?: string) {
+    const path = pathOverride ?? sourcePath;
+    if (!path) return;
     setAnalyzing(true);
     setAnalyzeError(null);
     setAnalysis(null);
@@ -76,7 +98,7 @@ export default function StudioDashboard() {
       const res = await fetch(`${API_BASE}/api/reels/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source_video_path: sourcePath }),
+        body: JSON.stringify({ source_video_path: path }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -89,6 +111,31 @@ export default function StudioDashboard() {
       setAnalyzeError(e instanceof Error ? e.message : "משהו השתבש");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file again later
+    if (!file) return;
+
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: formData });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "העלאת הקובץ נכשלה");
+      }
+      const data: { filename: string; file_path: string; size_mb: number } = await res.json();
+      setSourcePath(data.file_path);
+      setUploading(false);
+      await handleAnalyze(data.file_path);
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "משהו השתבש בהעלאה");
+      setUploading(false);
     }
   }
 
@@ -143,23 +190,109 @@ export default function StudioDashboard() {
         {/* Step 1: Source Footage */}
         <section className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-4">
           <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">שלב 1 · קליפ מקור</h2>
-          <div>
-            <label className="block text-sm font-medium mb-1">נתיב קליפ מקור</label>
-            <input
-              data-testid="source-path-input"
-              value={sourcePath}
-              onChange={(e) => setSourcePath(e.target.value)}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-              placeholder="references/treatment_flow/clip.mp4"
-            />
-            <p className="text-xs text-zinc-400 mt-1">
-              נתיב מקומי יחסי ל- D:\ClinicStudio, לדוגמה references/treatment_flow/clip.mp4
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="video/*,video/mp4,video/quicktime"
+            data-testid="file-input"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+
+          <button
+            type="button"
+            data-testid="upload-button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-rose-300 bg-rose-50/50 py-8 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition"
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="w-6 h-6 animate-spin" />
+                <span data-testid="upload-progress">מעלה קובץ...</span>
+              </>
+            ) : (
+              <>
+                <UploadCloud className="w-6 h-6" />
+                <span>Select Video from Device / Photo Library</span>
+              </>
+            )}
+          </button>
+
+          {uploadError && (
+            <p className="text-sm text-red-500 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4" /> {uploadError}
             </p>
+          )}
+
+          {sourcePath && !uploading && (
+            <p className="text-xs text-zinc-500">
+              קליפ נבחר: <span className="font-mono">{sourcePath}</span>
+            </p>
+          )}
+
+          <div className="border-t border-zinc-100 pt-3">
+            <button
+              type="button"
+              data-testid="toggle-manual-source"
+              onClick={() => setAccordionOpen((v) => !v)}
+              className="text-xs text-zinc-500 hover:text-zinc-800 flex items-center gap-1"
+            >
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${accordionOpen ? "rotate-180" : ""}`}
+              />
+              קבצים קיימים / הזנת נתיב ידנית (לבדיקות פיתוח)
+            </button>
+
+            {accordionOpen && (
+              <div data-testid="manual-source-panel" className="mt-3 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    קבצים שהועלו בעבר
+                  </label>
+                  {rawClips.length > 0 ? (
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {rawClips.map((c) => (
+                        <button
+                          key={c.file_path}
+                          type="button"
+                          onClick={() => setSourcePath(c.file_path)}
+                          className={`w-full text-right text-xs rounded-lg border px-2 py-1.5 transition ${
+                            sourcePath === c.file_path
+                              ? "border-rose-400 bg-rose-50"
+                              : "border-zinc-200 hover:border-zinc-300"
+                          }`}
+                        >
+                          {c.filename} · {c.size_mb}MB
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-400">אין קבצים קיימים ב-raw_clips/.</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    נתיב מקומי (לבדיקות פיתוח)
+                  </label>
+                  <input
+                    data-testid="source-path-input"
+                    value={sourcePath}
+                    onChange={(e) => setSourcePath(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
+                    placeholder="references/treatment_flow/clip.mp4"
+                  />
+                </div>
+              </div>
+            )}
           </div>
+
           <button
             type="button"
             data-testid="analyze-button"
-            onClick={handleAnalyze}
+            onClick={() => handleAnalyze()}
             disabled={analyzing || !sourcePath}
             className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-500 text-white py-3 font-medium disabled:opacity-40 hover:bg-rose-600 transition"
           >

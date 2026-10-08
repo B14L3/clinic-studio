@@ -44,22 +44,38 @@ async function mockAnalyze(page: Page) {
   });
 }
 
+async function mockRawClips(page: Page) {
+  await page.route("**/api/raw-clips", async (route) => {
+    await route.fulfill({ json: [] });
+  });
+}
+
 async function analyzeFootage(page: Page) {
   await page.goto("/");
+  await page.getByTestId("toggle-manual-source").click();
   await page.getByTestId("source-path-input").fill("references/treatment_flow/clip.mp4");
   await page.getByTestId("analyze-button").click();
   await expect(page.getByTestId("ai-recommendation-card")).toBeVisible();
 }
 
 test("initial state displays source input and analyze button", async ({ page }) => {
+  await mockRawClips(page);
   await page.goto("/");
 
+  await expect(page.getByTestId("upload-button")).toBeVisible();
+  await expect(page.getByTestId("toggle-manual-source")).toBeVisible();
+
+  // Manual path input lives in the collapsible accordion, closed by default.
+  await expect(page.getByTestId("source-path-input")).toHaveCount(0);
+  await page.getByTestId("toggle-manual-source").click();
   await expect(page.getByTestId("source-path-input")).toBeVisible();
+
   await expect(page.getByTestId("analyze-button")).toBeVisible();
   await expect(page.getByTestId("ai-recommendation-card")).toHaveCount(0);
 });
 
 test("analyzing footage surfaces the AI recommendation card with Hebrew reasoning", async ({ page }) => {
+  await mockRawClips(page);
   await mockAnalyze(page);
   await analyzeFootage(page);
 
@@ -74,6 +90,7 @@ test("analyzing footage surfaces the AI recommendation card with Hebrew reasonin
 });
 
 test("recommended blueprint is selected by default, and clicking another overrides it", async ({ page }) => {
+  await mockRawClips(page);
   await mockAnalyze(page);
   await analyzeFootage(page);
 
@@ -91,6 +108,7 @@ test("recommended blueprint is selected by default, and clicking another overrid
 });
 
 test("generate button sends the currently selected blueprint id in the request payload", async ({ page }) => {
+  await mockRawClips(page);
   await mockAnalyze(page);
 
   let generateRequestBody: { blueprint_id?: number } | undefined;
@@ -108,4 +126,38 @@ test("generate button sends the currently selected blueprint id in the request p
 
   await expect(page.getByTestId("result-section")).toBeVisible();
   expect(generateRequestBody?.blueprint_id).toBe(2);
+});
+
+test("selecting a video file uploads it and automatically triggers the AI recommendation flow", async ({
+  page,
+}) => {
+  await mockRawClips(page);
+  await mockAnalyze(page);
+
+  const mockUploadResponse = {
+    filename: "20261008_230000_abcd1234_clip.mp4",
+    file_path: "raw_clips/20261008_230000_abcd1234_clip.mp4",
+    size_mb: 4.2,
+  };
+  let uploadReceived = false;
+  await page.route("**/api/upload", async (route) => {
+    uploadReceived = true;
+    await route.fulfill({ json: mockUploadResponse });
+  });
+
+  await page.goto("/");
+
+  // Simulate picking a video from the device/photo library via the hidden input.
+  await page.getByTestId("file-input").setInputFiles({
+    name: "clip.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from("fake-mp4-bytes-for-testing"),
+  });
+
+  // Upload completes and the recommendation flow is triggered automatically,
+  // with no manual click on "Analyze Footage with AI" required.
+  await expect(page.getByTestId("ai-recommendation-card")).toBeVisible();
+  expect(uploadReceived).toBe(true);
+
+  await expect(page.getByText(mockUploadResponse.file_path)).toBeVisible();
 });
