@@ -88,6 +88,28 @@ def seed_rules() -> int:
         conn.close()
 
 
+BLUEPRINT_RENAMES: dict[int, str] = {
+    1: "Ambient Treatment Flow (21 Micro-Cuts, Fast Paced)",
+    2: "Voiceover Explainer (12 Cuts, Structured Pacing)",
+}
+
+
+def rename_blueprints() -> int:
+    """Apply canonical display names to known blueprint ids. Returns rows updated."""
+    conn = get_connection()
+    try:
+        updated = 0
+        for blueprint_id, new_name in BLUEPRINT_RENAMES.items():
+            cur = conn.execute(
+                "UPDATE blueprints SET name = ? WHERE id = ?", (new_name, blueprint_id)
+            )
+            updated += cur.rowcount
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     init_db()
     print(f"Database ready at {DB_PATH}")
@@ -96,3 +118,6 @@ if __name__ == "__main__":
         print(f"Seeded {inserted} default rule(s) into the rules table.")
     else:
         print("rules table already has data; skipped seeding.")
+
+    renamed = rename_blueprints()
+    print(f"Renamed {renamed} blueprint(s).")
