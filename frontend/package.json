@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:diagnostic": "playwright test e2e/diagnostic.spec.ts --reporter=list"
   },
   "dependencies": {
     "lucide-react": "^1.52.0",
