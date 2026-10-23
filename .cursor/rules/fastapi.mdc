@@ -1,0 +1,37 @@
+---
+description: FastAPI rules. Strict Pydantic models and async route handlers. No SQLAlchemy or auth stack.
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# FastAPI
+
+Source: PatrickJS/awesome-cursorrules `rules/fastapi.mdc`, trimmed to this app.
+
+Clinic Studio uses SQLite through `backend/database.py`, local `.env` keys, and no user accounts. Do not add SQLAlchemy, Alembic, JWT, OAuth, sessions, or Docker because those appear in the upstream rule.
+
+## Routes
+
+- Every route handler is `async def`, including handlers that only read SQLite.
+- Declare `response_model` on every route that returns JSON.
+- Request bodies are Pydantic `BaseModel`s. Do not accept raw `dict` payloads.
+- Validate path and upload constraints in the handler and raise `HTTPException` with an explicit status code.
+- Keep routers in `backend/routers/`, one domain per module. Business logic stays in `backend/services/`.
+- Type-hint every function. Let FastAPI generate the OpenAPI schema from the models.
+
+```python
+# BAD
+@router.post("/reels/generate")
+def generate_reel(body: dict):
+    return {"ok": True}
+
+# GOOD
+@router.post("/reels/generate", response_model=GenerateReelResponse)
+async def generate_reel(body: GenerateReelRequest) -> GenerateReelResponse:
+    ...
+```
+
+## Config and errors
+
+- Read API keys from `backend/.env` via `python-dotenv`. Never hardcode them.
+- Catch service failures and map them to `HTTPException`. Do not leak traceback strings as the only client error when a 4xx is the real cause (missing file, empty segments).

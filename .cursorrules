@@ -14,8 +14,8 @@
 - You write resilient, clean, type-hinted code. You do not write theoretical solutions—you execute, verify with actual terminal runs, and fix runtime errors yourself.
 
 ## III. Tech Stack
-- Backend: Python 3.10+, FastAPI, FFmpeg-python, SQLite.
-- Frontend: Next.js (App Router), Tailwind CSS, Lucide React.
+- Backend: Python 3.10+, FastAPI, SQLite. FFmpeg is invoked as argv lists via `subprocess` (composer pattern in `.cursor/rules/ffmpeg-composer.mdc`), not shell scripts and not the `ffmpeg-python` library.
+- Frontend: Next.js (App Router), Tailwind CSS, Lucide React. Server Components by default; `"use client"` only for interactive islands.
 - Vision AI: Google Gemini API, model `gemini-3.6-flash` (raw video analysis, scene tagging & blueprint extraction). Pro tier (`gemini-3.1-pro`, aliased by `gemini-3.6-pro`/`gemini-2.5-pro`/`gemini-pro-latest`) is preferred for blueprint extraction when active on the billing plan — currently blocked by a 0-quota free-tier limit on this key, so `gemini-3.6-flash` is the live fallback. Re-check availability if billing changes.
 - Copywriting AI: Anthropic Claude API, model `claude-sonnet-4-6` (Hebrew copywriting, hooks, local SEO captions); use `claude-haiku-4-5-20251001` for lightweight/low-latency tasks.
 
@@ -39,3 +39,10 @@
 - Modular backend: /backend/services/ for AI/video, /backend/routers/ for endpoints.
 - UI: Clean, luxury esthetician theme with 1-click workflows.
 - Security: Never hardcode API keys. Always use local .env.
+
+## VII. Code Quality Rules
+Scoped Cursor rules live in `.cursor/rules/`. They apply when matching files are edited. Do not paste the unfiltered awesome-cursorrules FastAPI file: this app has no SQLAlchemy, JWT, OAuth, or Docker.
+
+- `nextjs-app-router.mdc` — Server Components by default. Source: PatrickJS/awesome-cursorrules `rules/nextjs-app-router-cursorrules-prompt-file.mdc`.
+- `fastapi.mdc` — Pydantic request/response models and `async def` route handlers. Source: PatrickJS/awesome-cursorrules `rules/fastapi.mdc`, trimmed to this stack.
+- `ffmpeg-composer.mdc` — modular FFmpeg builders for the upcoming dynamic pipeline. Source: numbpill3d/ffmpeg-ai `composer.py` + `shorts.py`. Reference only until V2 editing code starts.

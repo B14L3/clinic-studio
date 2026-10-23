@@ -1,0 +1,34 @@
+---
+description: Next.js App Router rules. Server Components by default; client islands only for interactivity.
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Next.js App Router
+
+Source: PatrickJS/awesome-cursorrules `rules/nextjs-app-router-cursorrules-prompt-file.mdc`, adapted to this TypeScript App Router app.
+
+## Server Components by default
+
+- Every new `page.tsx`, `layout.tsx`, and shared component is a Server Component.
+- Add `"use client"` only for state, effects, event handlers, or browser APIs (file picker, clipboard, video controls).
+- Keep the client boundary as small as possible. Do not mark a whole route client just to use one button.
+- Fetch data in the Server Component or call FastAPI from a small client island. Do not add a new `useEffect` fetch when the server can pass the data in.
+
+```tsx
+// BAD — whole page is client because one control needs state
+"use client";
+export default function Page() { /* entire dashboard */ }
+
+// GOOD — server page, client island for the control that needs the browser
+export default function Page() {
+  return <UploadDropzone />;
+}
+```
+
+## App Router
+
+- Routes live under `frontend/app/`. Special files: `layout.tsx`, `page.tsx`, `loading.tsx`, `error.tsx`.
+- Export `metadata` from server layouts/pages. Do not export `metadata` from a client component.
+- Style with Tailwind. Use `next/image` for raster images. Read config from env vars, never hardcoded secrets.
+- This UI is RTL Hebrew. New layout must keep `dir="rtl"` on the page shell.

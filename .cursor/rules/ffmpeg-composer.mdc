@@ -1,0 +1,37 @@
+---
+description: FFmpeg command architecture for the reel pipeline. Modular subprocess builders, no shell scripts.
+globs: backend/services/video_engine.py
+alwaysApply: false
+---
+
+# FFmpeg composer pattern
+
+Reference: `numbpill3d/ffmpeg-ai` (`src/ffmpeg_ai/video/composer.py`, `shorts.py`). Use this when the V2 dynamic cut pipeline is built. Do not shell out through `cmd.exe` or write `.bat` filter graphs.
+
+## Shape
+
+- One module owns every `ffmpeg` / `ffprobe` call. Callers pass paths and segment times; they never assemble filter strings.
+- Commands are `list[str]` argv passed to `subprocess.run`. Never `shell=True`.
+- One runner raises `RuntimeError` with the command label and the tail of stderr/stdout.
+- A small spec object owns the encode contract: 1080x1920, 30 fps, `libx264`, `yuv420p`, AAC, `+faststart`. `video_engine.py` already has these as module constants — keep them in one place.
+- Each operation is its own function: normalize, slice, concat, probe duration. Add new operations as new functions, not as branches inside one giant command.
+
+## Concat
+
+- Normalize every slice to the same size, fps, pixel format, and audio codec **before** concat.
+- Concat already-normalized clips with the concat demuxer (`-f concat -safe 0 -c copy`) and a temp list file. Delete that list in `finally`.
+- Build any `filter_complex` as a Python list of labeled chains joined by `;`. Map explicit output labels (`[vfinal]`, `[aout]`).
+- Clinic reels use hard cuts. Do not add `xfade` unless a task asks for transitions.
+
+```python
+# GOOD — argv list, named step
+run_ffmpeg(["-ss", f"{start}", "-i", str(src), "-t", f"{duration}", "-c:v", "libx264", str(out)])
+
+# BAD — shell string
+os.system(f'ffmpeg -ss {start} -i "{src}" -t {duration} "{out}"')
+```
+
+## Text and temp files
+
+- Escape user-facing text before `drawtext` (`\`, `'`, `:`, `,`, `%`). Do not interpolate Hebrew copy into a shell string.
+- Write concat lists and intermediate slices under a temp directory and remove them when the step finishes.
