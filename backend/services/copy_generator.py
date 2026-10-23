@@ -20,6 +20,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 from database import get_connection  # noqa: E402
+from services.clip_analyzer import Segment  # noqa: E402
 
 load_dotenv(BACKEND_DIR / ".env")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -101,8 +102,14 @@ def generate_reel_copy(
     treatment_type: str,
     blueprint_id: Optional[int] = None,
     extra_notes: Optional[str] = None,
+    visual_summary: Optional[str] = None,
+    segments: Optional[list[Segment]] = None,
 ) -> ReelCopy:
-    """Generate structured Hebrew reel copy for a treatment, grounded in active SQLite rules."""
+    """Generate structured Hebrew reel copy for a treatment, grounded in active SQLite rules.
+
+    V1 callers pass blueprint_id. V2 callers pass visual_summary plus the highlight
+    segments from clip analysis. Both can be omitted.
+    """
     if not ANTHROPIC_API_KEY:
         raise SystemExit("ANTHROPIC_API_KEY missing from backend/.env")
 
@@ -115,6 +122,16 @@ def generate_reel_copy(
         if timeline:
             blueprint_block = f"\n\nAlign the on-screen hook timing to this edit:\n{timeline}"
 
+    vision_block = ""
+    if visual_summary and segments:
+        scene_lines = "\n".join(f"  - {segment.action_description}" for segment in segments)
+        vision_block = (
+            "\n\nThe video contains the following scenes:\n"
+            f"{scene_lines}\n"
+            f"Overall visual summary: {visual_summary}\n"
+            "Ground the caption in these specific visual moments."
+        )
+
     notes_block = f"\n\nAdditional notes: {extra_notes}" if extra_notes else ""
 
     system_prompt = (
@@ -126,6 +143,7 @@ def generate_reel_copy(
         f"Treatment: {treatment_type}\n\n"
         f"Marketing rules to follow:\n{rules_block}"
         f"{blueprint_block}"
+        f"{vision_block}"
         f"{notes_block}\n\n"
         "Write the on-screen hook, caption, call-to-action, and hashtags for this treatment's reel."
     )
