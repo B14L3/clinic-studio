@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 from database import get_connection  # noqa: E402
+from services.clip_analyzer import Segment  # noqa: E402
 
 OUTPUT_DIR = Path(r"D:\ClinicStudio\outputs")
 REFERENCES_DIR = Path(r"D:\ClinicStudio\references")
@@ -97,6 +98,67 @@ def assemble_reel(segment_paths: list[Path], output_path: Path) -> None:
         )
     finally:
         list_file.unlink(missing_ok=True)
+
+
+def probe_duration(video_path: Path) -> float:
+    """Return the container duration in seconds via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = (result.stderr or result.stdout or "(no output)").strip()
+        raise RuntimeError(f"ffprobe failed for {video_path.name}: {detail}")
+    return float(result.stdout.strip())
+
+
+def render_from_segments(
+    source_video_path: Path,
+    segments: list[Segment],
+    output_filename: str | None = None,
+) -> tuple[Path, float]:
+    """Slice each highlight, normalize to 9:16, and concatenate into outputs/.
+
+    Returns the output path and the probed duration of the finished reel.
+    """
+    if not segments:
+        raise ValueError("render_from_segments requires at least one segment")
+    if not source_video_path.is_file():
+        raise FileNotFoundError(f"Source video not found: {source_video_path}")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    filename = output_filename or f"reel_v2_{uuid.uuid4().hex[:8]}.mp4"
+    output_path = OUTPUT_DIR / filename
+
+    print(f"Rendering {len(segments)} segment(s) from {source_video_path.name}")
+    with tempfile.TemporaryDirectory(prefix="clinicstudio_v2_") as tmp:
+        tmp_dir = Path(tmp)
+        normalized_paths: list[Path] = []
+        for i, segment in enumerate(segments):
+            start = segment.start_time
+            duration = segment.end_time - segment.start_time
+            sliced = tmp_dir / f"slice_{i}.mp4"
+            normalized = tmp_dir / f"norm_{i}.mp4"
+            print(
+                f"  [{i + 1}/{len(segments)}] {start:.2f}s-{segment.end_time:.2f}s "
+                f"({duration:.2f}s) {segment.action_description}"
+            )
+            slice_clip(source_video_path, start, duration, sliced)
+            normalize_clip(sliced, normalized)
+            normalized_paths.append(normalized)
+
+        print(f"  Assembling {len(normalized_paths)} segment(s) -> {output_path}")
+        assemble_reel(normalized_paths, output_path)
+
+    rendered_duration = probe_duration(output_path)
+    print(f"Done: {output_path} ({rendered_duration:.2f}s)")
+    return output_path, rendered_duration
 
 
 def _fetch_blueprint_segments(blueprint_id: int) -> list[dict]:
