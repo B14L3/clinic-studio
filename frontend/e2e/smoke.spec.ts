@@ -8,6 +8,6 @@ test("Studio Dashboard loads with core elements", async ({ page }) => {
   const header = page.getByRole("heading", { level: 1 });
   await expect(header).toContainText("Clinic Studio");
 
-  await expect(page.getByTestId("blueprint-selection")).toBeVisible();
+  await expect(page.getByTestId("segment-timeline")).toBeVisible();
   await expect(page.getByTestId("generate-button")).toBeVisible();
 });

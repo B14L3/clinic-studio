@@ -1,12 +1,10 @@
-"""Reel pipeline endpoints: blueprints, rules, uploads, and end-to-end reel generation."""
+"""Reel pipeline endpoints: uploads, dynamic highlight analysis, and reel generation."""
 import json
 import re
-import subprocess
 import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -15,9 +13,13 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 from database import get_connection  # noqa: E402
-from services.blueprint_matcher import recommend_blueprint  # noqa: E402
+from services.clip_analyzer import (  # noqa: E402
+    ClipAnalysisResult,
+    Segment,
+    analyze_clip_for_highlights,
+)
 from services.copy_generator import generate_reel_copy  # noqa: E402
-from services.video_engine import OUTPUT_DIR, render_blueprint_test  # noqa: E402
+from services.video_engine import OUTPUT_DIR, render_from_segments  # noqa: E402
 
 CLINIC_STUDIO_ROOT = Path(r"D:\ClinicStudio")
 RAW_CLIPS_DIR = CLINIC_STUDIO_ROOT / "raw_clips"
@@ -28,10 +30,11 @@ router = APIRouter()
 
 
 class GenerateReelRequest(BaseModel):
-    blueprint_id: int
     source_video_path: str
-    treatment_type: str
-    extra_notes: Optional[str] = None
+    segments: list[Segment]
+    visual_summary: str | None = None
+    treatment_name: str
+    extra_notes: str | None = None
 
 
 class CopyPayload(BaseModel):
@@ -54,20 +57,9 @@ class AnalyzeReelRequest(BaseModel):
     source_video_path: str
 
 
-class BlueprintOption(BaseModel):
-    id: int
-    name: str
-    category: str
-    duration: Optional[float] = None
-    segment_count: int
-
-
 class AnalyzeReelResponse(BaseModel):
-    recommended_blueprint_id: int
-    blueprint_name: str
-    confidence: float
-    reasoning: str
-    blueprints: list[BlueprintOption]
+    segments: list[Segment]
+    visual_summary_hebrew: str
 
 
 class UploadResponse(BaseModel):
@@ -153,22 +145,18 @@ def list_blueprints():
 
 
 @router.post("/reels/analyze", response_model=AnalyzeReelResponse)
-def analyze_reel(req: AnalyzeReelRequest):
-    """Analyze a raw clip via Gemini and recommend the best-fit blueprint,
-    returning the full blueprint list too so the frontend can override it."""
+async def analyze_reel(req: AnalyzeReelRequest):
+    """Watch a raw clip and return editable highlight cuts plus a Hebrew visual summary."""
     source_path = _resolve_source_path(req.source_video_path)
 
     try:
-        match = recommend_blueprint(str(source_path))
+        analysis: ClipAnalysisResult = analyze_clip_for_highlights(str(source_path))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Blueprint matching failed: {e}") from e
+        raise HTTPException(status_code=500, detail=f"Clip analysis failed: {e}") from e
 
     return AnalyzeReelResponse(
-        recommended_blueprint_id=match.recommended_blueprint_id,
-        blueprint_name=match.blueprint_name,
-        confidence=match.confidence,
-        reasoning=match.reasoning,
-        blueprints=[BlueprintOption(**b) for b in list_blueprints()],
+        segments=analysis.segments,
+        visual_summary_hebrew=analysis.visual_summary_hebrew,
     )
 
 
@@ -185,19 +173,6 @@ def list_active_rules():
     return [dict(r) for r in rows]
 
 
-def _fetch_blueprint_data(blueprint_id: int) -> dict:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT data_json FROM blueprints WHERE id = ?", (blueprint_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Blueprint id={blueprint_id} not found")
-    return json.loads(row["data_json"])
-
-
 def _resolve_source_path(raw_path: str) -> Path:
     path = Path(raw_path)
     if not path.is_absolute():
@@ -207,50 +182,33 @@ def _resolve_source_path(raw_path: str) -> Path:
     return path
 
 
-def _ffprobe_duration(video_path: Path) -> float:
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(video_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed: {result.stderr}")
-    return float(result.stdout.strip())
-
-
 @router.post("/reels/generate", response_model=GenerateReelResponse)
-def generate_reel(req: GenerateReelRequest):
-    """Assemble the full blueprint into a reel and generate matching Hebrew copy."""
-    source_path = _resolve_source_path(req.source_video_path)
-    blueprint_data = _fetch_blueprint_data(req.blueprint_id)
-    segment_count = len(blueprint_data.get("segments", []))
-    if segment_count == 0:
-        raise HTTPException(status_code=400, detail=f"Blueprint id={req.blueprint_id} has no segments")
+async def generate_reel(req: GenerateReelRequest):
+    """Slice the edited highlight list into a reel and write Hebrew copy from that context."""
+    if not req.segments:
+        raise HTTPException(status_code=400, detail="At least one segment is required")
 
-    output_filename = f"reel_{req.blueprint_id}_{uuid.uuid4().hex[:8]}.mp4"
-    output_path = OUTPUT_DIR / output_filename
+    source_path = _resolve_source_path(req.source_video_path)
+    output_filename = f"reel_{uuid.uuid4().hex[:8]}.mp4"
 
     try:
-        render_blueprint_test(
-            blueprint_id=req.blueprint_id,
-            source_video_path=source_path,
-            output_path=output_path,
-            max_segments=segment_count,
+        output_path, duration = render_from_segments(
+            source_path,
+            req.segments,
+            output_filename=output_filename,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Video assembly failed: {e}") from e
 
     try:
-        copy = generate_reel_copy(req.treatment_type, req.blueprint_id, req.extra_notes)
+        copy = generate_reel_copy(
+            req.treatment_name,
+            extra_notes=req.extra_notes,
+            visual_summary=req.visual_summary,
+            segments=req.segments,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Copy generation failed: {e}") from e
-
-    duration = _ffprobe_duration(output_path)
 
     return GenerateReelResponse(
         status="success",

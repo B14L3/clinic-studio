@@ -13,12 +13,10 @@ import {
   ChevronDown,
 } from "lucide-react";
 
-interface BlueprintOption {
-  id: number;
-  name: string;
-  category: string;
-  duration: number;
-  segment_count: number;
+interface Segment {
+  start_time: number;
+  end_time: number;
+  action_description: string;
 }
 
 interface RawClip {
@@ -28,11 +26,8 @@ interface RawClip {
 }
 
 interface AnalyzeResponse {
-  recommended_blueprint_id: number;
-  blueprint_name: string;
-  confidence: number;
-  reasoning: string;
-  blueprints: BlueprintOption[];
+  segments: Segment[];
+  visual_summary_hebrew: string;
 }
 
 interface ReelCopy {
@@ -61,9 +56,9 @@ export default function StudioDashboard() {
   const [accordionOpen, setAccordionOpen] = useState(false);
   const [rawClips, setRawClips] = useState<RawClip[]>([]);
 
-  // Step 2: AI recommendation + blueprint list/selection
-  const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Step 2: editable highlight timeline
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [visualSummary, setVisualSummary] = useState("");
 
   // Step 3: treatment details + generate
   const [treatment, setTreatment] = useState("");
@@ -88,8 +83,8 @@ export default function StudioDashboard() {
     if (!path) return;
     setAnalyzing(true);
     setAnalyzeError(null);
-    setAnalysis(null);
-    setSelectedId(null);
+    setSegments([]);
+    setVisualSummary("");
     setResult(null);
     try {
       const res = await fetch("/api/reels/analyze", {
@@ -102,8 +97,8 @@ export default function StudioDashboard() {
         throw new Error(err.detail || "שגיאה בניתוח הקליפ");
       }
       const data: AnalyzeResponse = await res.json();
-      setAnalysis(data);
-      setSelectedId(data.recommended_blueprint_id);
+      setSegments(data.segments);
+      setVisualSummary(data.visual_summary_hebrew);
     } catch (e) {
       setAnalyzeError(e instanceof Error ? e.message : "משהו השתבש");
     } finally {
@@ -136,8 +131,24 @@ export default function StudioDashboard() {
     }
   }
 
+  function handleSegmentChange(index: number, field: keyof Segment, value: string) {
+    setSegments((current) =>
+      current.map((segment, i) => {
+        if (i !== index) return segment;
+        if (field === "action_description") {
+          return { ...segment, action_description: value };
+        }
+        return { ...segment, [field]: Number(value) };
+      }),
+    );
+  }
+
+  function handleDeleteSegment(index: number) {
+    setSegments((current) => current.filter((_, i) => i !== index));
+  }
+
   async function handleGenerate() {
-    if (!selectedId || !treatment) return;
+    if (segments.length === 0 || !treatment) return;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -146,9 +157,10 @@ export default function StudioDashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          blueprint_id: selectedId,
           source_video_path: sourcePath,
-          treatment_type: treatment,
+          segments,
+          visual_summary: visualSummary || null,
+          treatment_name: treatment,
           extra_notes: notes || null,
         }),
       });
@@ -180,7 +192,7 @@ export default function StudioDashboard() {
             Clinic Studio — יצירת ריל אוטומטית
           </h1>
           <p className="text-sm text-zinc-500">
-            העלי נתיב לקליפ מקור, קבלי בלופרינט מומלץ מה-AI, והרכיבי ריל מוכן תוך דקות.
+            העלי קליפ מקור, ערכי את חיתוכי ה-AI, והרכיבי ריל מוכן תוך דקות.
           </p>
         </header>
 
@@ -320,64 +332,74 @@ export default function StudioDashboard() {
           )}
         </section>
 
-        {/* Step 2: AI Recommendation & blueprint selection */}
+        {/* Step 2: editable highlight timeline */}
         <section
-          data-testid="blueprint-selection"
+          data-testid="segment-timeline"
           className="bg-white rounded-2xl shadow-sm border border-zinc-200 p-6 space-y-5"
         >
           <h2 className="text-xs font-semibold text-zinc-400 tracking-wide">
-            שלב 2 · המלצת AI ובחירת בלופרינט
+            שלב 2 · ציר זמן לחיתוכים
           </h2>
 
-          {analysis ? (
+          {segments.length > 0 ? (
             <>
-              <div
-                data-testid="ai-recommendation-card"
-                className="rounded-xl border border-rose-200 bg-rose-50 p-4 space-y-2"
-              >
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-100 rounded-full px-2 py-0.5">
-                  <Sparkles className="w-3 h-3" /> AI Recommended
-                </span>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium">{analysis.blueprint_name}</span>
-                  <span className="text-xs text-zinc-500 shrink-0">
-                    {Math.round(analysis.confidence * 100)}% ביטחון
-                  </span>
-                </div>
-                <p dir="rtl" data-testid="ai-reasoning" className="text-sm text-zinc-600">
-                  {analysis.reasoning}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {analysis.blueprints.map((bp) => (
-                  <button
-                    key={bp.id}
-                    type="button"
-                    data-testid={`blueprint-card-${bp.id}`}
-                    onClick={() => setSelectedId(bp.id)}
-                    className={`text-right rounded-xl border p-4 transition ${
-                      selectedId === bp.id
-                        ? "border-rose-400 bg-rose-50"
-                        : "border-zinc-200 hover:border-zinc-300"
-                    }`}
+              <p dir="rtl" data-testid="visual-summary" className="text-sm text-zinc-600">
+                {visualSummary}
+              </p>
+              <div className="space-y-3">
+                {segments.map((segment, index) => (
+                  <div
+                    key={index}
+                    data-testid={`segment-row-${index}`}
+                    className="rounded-xl border border-zinc-200 p-3 space-y-2"
                   >
-                    <div className="font-medium truncate flex items-center gap-1.5">
-                      {bp.name}
-                      {bp.id === analysis.recommended_blueprint_id && (
-                        <Sparkles className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                      )}
+                    <div className="flex gap-2">
+                      <label className="flex-1 text-xs text-zinc-500">
+                        התחלה
+                        <input
+                          type="number"
+                          step="0.1"
+                          data-testid={`segment-start-${index}`}
+                          value={segment.start_time}
+                          onChange={(e) => handleSegmentChange(index, "start_time", e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="flex-1 text-xs text-zinc-500">
+                        סיום
+                        <input
+                          type="number"
+                          step="0.1"
+                          data-testid={`segment-end-${index}`}
+                          value={segment.end_time}
+                          onChange={(e) => handleSegmentChange(index, "end_time", e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-sm"
+                        />
+                      </label>
                     </div>
-                    <div className="text-xs text-zinc-500 mt-1">
-                      {bp.category} · {bp.duration}s · {bp.segment_count} קאטים
-                    </div>
-                  </button>
+                    <input
+                      data-testid={`segment-action-${index}`}
+                      value={segment.action_description}
+                      onChange={(e) =>
+                        handleSegmentChange(index, "action_description", e.target.value)
+                      }
+                      className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      data-testid={`segment-delete-${index}`}
+                      onClick={() => handleDeleteSegment(index)}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 ))}
               </div>
             </>
           ) : (
             <p className="text-sm text-zinc-400">
-              נתחי קליפ מקור כדי לקבל המלצת AI ולבחור בלופרינט.
+              נתחי קליפ מקור כדי לקבל חיתוכים מוצעים ולערוך אותם.
             </p>
           )}
         </section>
@@ -412,7 +434,7 @@ export default function StudioDashboard() {
             type="button"
             data-testid="generate-button"
             onClick={handleGenerate}
-            disabled={loading || !selectedId || !treatment}
+            disabled={loading || segments.length === 0 || !treatment}
             className="w-full flex items-center justify-center gap-2 rounded-xl bg-zinc-900 text-white py-3 font-medium disabled:opacity-40 hover:bg-zinc-800 transition"
           >
             {loading ? (
