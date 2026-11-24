@@ -14,11 +14,11 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from database import get_connection  # noqa: E402
 from services.clip_analyzer import (  # noqa: E402
-    ClipAnalysisResult,
     Segment,
     analyze_clip_for_highlights,
 )
 from services.copy_generator import generate_reel_copy  # noqa: E402
+from services.jobs import JobAcceptedResponse, create_job, schedule_job  # noqa: E402
 from services.video_engine import OUTPUT_DIR, render_from_segments  # noqa: E402
 
 CLINIC_STUDIO_ROOT = Path(r"D:\ClinicStudio")
@@ -104,7 +104,7 @@ async def upload_raw_clip(file: UploadFile = File(...)):
 
 
 @router.get("/raw-clips", response_model=list[UploadResponse])
-def list_raw_clips():
+async def list_raw_clips() -> list[UploadResponse]:
     """List previously uploaded raw clips in raw_clips/, newest first."""
     files = sorted(RAW_CLIPS_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
     return [
@@ -119,7 +119,7 @@ def list_raw_clips():
 
 
 @router.get("/blueprints")
-def list_blueprints():
+async def list_blueprints():
     """Return all extracted blueprints: id, name, category, duration, segment count."""
     conn = get_connection()
     try:
@@ -144,24 +144,28 @@ def list_blueprints():
     return result
 
 
-@router.post("/reels/analyze", response_model=AnalyzeReelResponse)
-async def analyze_reel(req: AnalyzeReelRequest):
-    """Watch a raw clip and return editable highlight cuts plus a Hebrew visual summary."""
-    source_path = _resolve_source_path(req.source_video_path)
-
+def _run_analyze(source_path: str) -> dict:
     try:
-        analysis: ClipAnalysisResult = analyze_clip_for_highlights(str(source_path))
+        analysis = analyze_clip_for_highlights(source_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Clip analysis failed: {e}") from e
-
+        raise RuntimeError(f"Clip analysis failed: {e}") from e
     return AnalyzeReelResponse(
         segments=analysis.segments,
         visual_summary_hebrew=analysis.visual_summary_hebrew,
-    )
+    ).model_dump()
+
+
+@router.post("/reels/analyze", response_model=JobAcceptedResponse, status_code=202)
+async def analyze_reel(req: AnalyzeReelRequest) -> JobAcceptedResponse:
+    """Queue highlight detection so the phone can poll instead of holding the proxy open."""
+    source_path = _resolve_source_path(req.source_video_path)
+    job = create_job()
+    schedule_job(job.job_id, _run_analyze, str(source_path))
+    return JobAcceptedResponse(job_id=job.job_id, status="queued")
 
 
 @router.get("/rules")
-def list_active_rules():
+async def list_active_rules():
     """Return all active copywriting rules."""
     conn = get_connection()
     try:
@@ -182,33 +186,32 @@ def _resolve_source_path(raw_path: str) -> Path:
     return path
 
 
-@router.post("/reels/generate", response_model=GenerateReelResponse)
-async def generate_reel(req: GenerateReelRequest):
-    """Slice the edited highlight list into a reel and write Hebrew copy from that context."""
-    if not req.segments:
-        raise HTTPException(status_code=400, detail="At least one segment is required")
-
-    source_path = _resolve_source_path(req.source_video_path)
-    output_filename = f"reel_{uuid.uuid4().hex[:8]}.mp4"
-
+def _run_generate(
+    source_path: str,
+    segments: list[Segment],
+    visual_summary: str | None,
+    treatment_name: str,
+    extra_notes: str | None,
+    output_filename: str,
+) -> dict:
     try:
         output_path, duration = render_from_segments(
-            source_path,
-            req.segments,
+            Path(source_path),
+            segments,
             output_filename=output_filename,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Video assembly failed: {e}") from e
+        raise RuntimeError(f"Video assembly failed: {e}") from e
 
     try:
         copy = generate_reel_copy(
-            req.treatment_name,
-            extra_notes=req.extra_notes,
-            visual_summary=req.visual_summary,
-            segments=req.segments,
+            treatment_name,
+            extra_notes=extra_notes,
+            visual_summary=visual_summary,
+            segments=segments,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Copy generation failed: {e}") from e
+        raise RuntimeError(f"Copy generation failed: {e}") from e
 
     return GenerateReelResponse(
         status="success",
@@ -217,4 +220,26 @@ async def generate_reel(req: GenerateReelRequest):
         video_url=f"/outputs/{output_filename}",
         duration=round(duration, 2),
         copywriting=CopyPayload(**copy.model_dump()),
+    ).model_dump()
+
+
+@router.post("/reels/generate", response_model=JobAcceptedResponse, status_code=202)
+async def generate_reel(req: GenerateReelRequest) -> JobAcceptedResponse:
+    """Queue the reel render and Hebrew copy, then let the client poll for the result."""
+    if not req.segments:
+        raise HTTPException(status_code=400, detail="At least one segment is required")
+
+    source_path = _resolve_source_path(req.source_video_path)
+    output_filename = f"reel_{uuid.uuid4().hex[:8]}.mp4"
+    job = create_job()
+    schedule_job(
+        job.job_id,
+        _run_generate,
+        str(source_path),
+        req.segments,
+        req.visual_summary,
+        req.treatment_name,
+        req.extra_notes,
+        output_filename,
     )
+    return JobAcceptedResponse(job_id=job.job_id, status="queued")

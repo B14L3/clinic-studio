@@ -46,13 +46,152 @@ interface GenerateResponse {
   copywriting: ReelCopy;
 }
 
+const POLL_INTERVAL_MS = 1750;
+
+interface JobSnapshot<T> {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  result: T | null;
+  error: string | null;
+}
+
+function jobStatusLabel(kind: "analyze" | "generate", status: string): string {
+  if (kind === "analyze") {
+    return status === "running"
+      ? "הניתוח רץ כעת, זה יכול לקחת דקה"
+      : "הניתוח בתור, ממתינים לתור העיבוד";
+  }
+  return status === "running"
+    ? "ההפקה רצה כעת, מרכיבים את הריל"
+    : "ההפקה בתור, ממתינים לתור העיבוד";
+}
+
+async function readError(res: Response, fallback: string): Promise<string> {
+  const err = await res.json().catch(() => ({ detail: res.statusText }));
+  return typeof err.detail === "string" && err.detail ? err.detail : fallback;
+}
+
+async function pollJob<T>(
+  jobId: string,
+  kind: "analyze" | "generate",
+  onStatus: (label: string) => void,
+): Promise<T> {
+  for (;;) {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    if (!res.ok) {
+      throw new Error(await readError(res, "שגיאה בבדיקת סטטוס המשימה"));
+    }
+    const job = (await res.json()) as JobSnapshot<T>;
+    if (job.status === "completed") {
+      if (job.result == null) throw new Error("המשימה הסתיימה ללא תוצאה");
+      return job.result;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "המשימה נכשלה");
+    }
+    onStatus(jobStatusLabel(kind, job.status));
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
+async function enqueueJob<T>(
+  url: string,
+  body: unknown,
+  kind: "analyze" | "generate",
+  onStatus: (label: string) => void,
+): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(await readError(res, "שגיאה בשרת"));
+  }
+  const accepted = (await res.json()) as { job_id?: string };
+  if (!accepted.job_id) throw new Error("השרת לא החזיר מזהה משימה");
+  onStatus(jobStatusLabel(kind, "queued"));
+  return pollJob<T>(accepted.job_id, kind, onStatus);
+}
+
+function uploadClip(file: File, onProgress: (percent: number) => void): Promise<RawClip> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      }
+    };
+    xhr.onload = () => {
+      let payload: Partial<RawClip> & { detail?: string } = {};
+      try {
+        payload = JSON.parse(xhr.responseText) as typeof payload;
+      } catch {
+        payload = {};
+      }
+      if (
+        xhr.status >= 200 &&
+        xhr.status < 300 &&
+        payload.filename &&
+        payload.file_path &&
+        typeof payload.size_mb === "number"
+      ) {
+        onProgress(100);
+        resolve({
+          filename: payload.filename,
+          file_path: payload.file_path,
+          size_mb: payload.size_mb,
+        });
+        return;
+      }
+      reject(new Error(payload.detail || "העלאת הקובץ נכשלה"));
+    };
+    xhr.onerror = () => reject(new Error("העלאת הקובץ נכשלה"));
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Plain HTTP on the LAN has no async clipboard. Fall through to execCommand.
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "true");
+  area.style.position = "fixed";
+  area.style.top = "0";
+  area.style.left = "0";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(area);
+  return ok;
+}
+
 export default function StudioDashboard() {
   // Step 1: source footage
   const [sourcePath, setSourcePath] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [analyzeStatus, setAnalyzeStatus] = useState<string | null>(null);
   const [accordionOpen, setAccordionOpen] = useState(false);
   const [rawClips, setRawClips] = useState<RawClip[]>([]);
 
@@ -64,6 +203,7 @@ export default function StudioDashboard() {
   const [treatment, setTreatment] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
+  const [generateStatus, setGenerateStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Step 4: output
@@ -83,26 +223,24 @@ export default function StudioDashboard() {
     if (!path) return;
     setAnalyzing(true);
     setAnalyzeError(null);
+    setAnalyzeStatus(null);
     setSegments([]);
     setVisualSummary("");
     setResult(null);
     try {
-      const res = await fetch("/api/reels/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source_video_path: path }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "שגיאה בניתוח הקליפ");
-      }
-      const data: AnalyzeResponse = await res.json();
+      const data = await enqueueJob<AnalyzeResponse>(
+        "/api/reels/analyze",
+        { source_video_path: path },
+        "analyze",
+        setAnalyzeStatus,
+      );
       setSegments(data.segments);
       setVisualSummary(data.visual_summary_hebrew);
     } catch (e) {
       setAnalyzeError(e instanceof Error ? e.message : "משהו השתבש");
     } finally {
       setAnalyzing(false);
+      setAnalyzeStatus(null);
     }
   }
 
@@ -112,16 +250,10 @@ export default function StudioDashboard() {
     if (!file) return;
 
     setUploading(true);
+    setUploadPercent(0);
     setUploadError(null);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "העלאת הקובץ נכשלה");
-      }
-      const data: { filename: string; file_path: string; size_mb: number } = await res.json();
+      const data = await uploadClip(file, setUploadPercent);
       setSourcePath(data.file_path);
       setUploading(false);
       await handleAnalyze(data.file_path);
@@ -151,34 +283,33 @@ export default function StudioDashboard() {
     if (segments.length === 0 || !treatment) return;
     setLoading(true);
     setError(null);
+    setGenerateStatus(null);
     setResult(null);
     try {
-      const res = await fetch("/api/reels/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await enqueueJob<GenerateResponse>(
+        "/api/reels/generate",
+        {
           source_video_path: sourcePath,
           segments,
           visual_summary: visualSummary || null,
           treatment_name: treatment,
           extra_notes: notes || null,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "שגיאה בשרת");
-      }
-      const data: GenerateResponse = await res.json();
+        },
+        "generate",
+        setGenerateStatus,
+      );
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "משהו השתבש");
     } finally {
       setLoading(false);
+      setGenerateStatus(null);
     }
   }
 
-  function copyToClipboard(text: string, field: string) {
-    navigator.clipboard.writeText(text);
+  async function copyToClipboard(text: string, field: string) {
+    const wrote = await writeClipboard(text);
+    if (!wrote) return;
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 1500);
   }
@@ -229,7 +360,7 @@ export default function StudioDashboard() {
             {uploading ? (
               <>
                 <Loader2 className="w-6 h-6 animate-spin" />
-                <span data-testid="upload-progress">מעלה קובץ...</span>
+                <span>מעלה קובץ...</span>
               </>
             ) : (
               <>
@@ -238,6 +369,21 @@ export default function StudioDashboard() {
               </>
             )}
           </label>
+
+          {uploading && (
+            <div data-testid="upload-progress" className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-rose-600">
+                <span>מעלה קובץ</span>
+                <span>{uploadPercent}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-rose-100">
+                <div
+                  className="h-full bg-rose-500 transition-[width] duration-150"
+                  style={{ width: `${uploadPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {uploadError && (
             <p className="text-sm text-red-500 flex items-center gap-1.5">
@@ -325,6 +471,11 @@ export default function StudioDashboard() {
               </>
             )}
           </button>
+          {analyzeStatus && (
+            <p data-testid="analyze-job-status" className="text-sm text-zinc-500">
+              {analyzeStatus}
+            </p>
+          )}
           {analyzeError && (
             <p className="text-sm text-red-500 flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4" /> {analyzeError}
@@ -448,6 +599,11 @@ export default function StudioDashboard() {
             )}
           </button>
 
+          {generateStatus && (
+            <p data-testid="generate-job-status" className="text-sm text-zinc-500">
+              {generateStatus}
+            </p>
+          )}
           {error && (
             <p className="text-sm text-red-500 flex items-center gap-1.5">
               <AlertCircle className="w-4 h-4" /> {error}
@@ -464,7 +620,9 @@ export default function StudioDashboard() {
             <div className="flex flex-col sm:flex-row gap-6">
               <video
                 src={result.video_url}
+                playsInline
                 controls
+                preload="metadata"
                 className="w-full sm:w-[220px] aspect-[9/16] rounded-xl bg-black object-cover shrink-0"
               />
               <div className="flex-1 space-y-4">
@@ -524,6 +682,7 @@ function CopyCard({
         <span className="text-xs font-medium text-zinc-500">{label}</span>
         <button
           type="button"
+          data-testid={`copy-${field}`}
           onClick={() => onCopy(text, field)}
           className="text-xs flex items-center gap-1 text-zinc-500 hover:text-zinc-900"
         >

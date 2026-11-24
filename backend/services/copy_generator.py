@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from anthropic import Anthropic
+from anthropic import Anthropic, BadRequestError
+from anthropic.types import Message
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -25,7 +26,11 @@ from services.clip_analyzer import Segment  # noqa: E402
 load_dotenv(BACKEND_DIR / ".env")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-MODEL = "claude-sonnet-4-6"
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+FALLBACK_MODEL = "claude-sonnet-4-6"
+# Models that rejected forced tool_choice in this process. claude-sonnet-5-5
+# returns 400: tool_choice type "tool" and "any" are not supported.
+_FORCED_TOOL_REJECTED: set[str] = set()
 
 COPY_TOOL = {
     "name": "generate_copy",
@@ -149,17 +154,40 @@ def generate_reel_copy(
     )
 
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=MODEL,
+    response = _create_copy_message(client, system_prompt, user_prompt)
+
+    tool_use = next(b for b in response.content if b.type == "tool_use")
+    return ReelCopy.model_validate(tool_use.input)
+
+
+def _create_copy_message(client: Anthropic, system_prompt: str, user_prompt: str) -> Message:
+    """Call Claude with forced tool_choice. Fall back when a model rejects it with 400."""
+    model = FALLBACK_MODEL if MODEL in _FORCED_TOOL_REJECTED else MODEL
+    try:
+        return _messages_create(client, model, system_prompt, user_prompt)
+    except BadRequestError as exc:
+        if model == FALLBACK_MODEL:
+            raise
+        _FORCED_TOOL_REJECTED.add(model)
+        detail = getattr(exc, "message", None) or str(exc)
+        print(
+            f"  [warn] {model} rejected forced tool_choice "
+            f"(HTTP {getattr(exc, 'status_code', 400)}): {detail}. "
+            f"Falling back to {FALLBACK_MODEL}."
+        )
+        return _messages_create(client, FALLBACK_MODEL, system_prompt, user_prompt)
+
+
+def _messages_create(client: Anthropic, model: str, system_prompt: str, user_prompt: str) -> Message:
+    # Do not pass thinking={"type": "disabled"} — claude-sonnet-5-5 rejects it.
+    return client.messages.create(
+        model=model,
         max_tokens=1024,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
         tools=[COPY_TOOL],
         tool_choice={"type": "tool", "name": "generate_copy"},
     )
-
-    tool_use = next(b for b in response.content if b.type == "tool_use")
-    return ReelCopy.model_validate(tool_use.input)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ V2 additive service. It does not read or write the V1 blueprints table.
 import os
 import random
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -23,7 +24,7 @@ CLINIC_STUDIO_ROOT = Path(r"D:\ClinicStudio")
 load_dotenv(BACKEND_DIR / ".env")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-MODEL = "gemini-3.6-flash"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 RETRY_DELAYS = [5, 12, 25, 45, 60]
 MIME_BY_SUFFIX = {
     ".mp4": "video/mp4",
@@ -93,18 +94,75 @@ def upload_and_wait(client: genai.Client, path: Path) -> types.File:
         time.sleep(3)
         uploaded = client.files.get(name=uploaded.name)
     if uploaded.state != types.FileState.ACTIVE:
+        name = uploaded.name
+        client.files.delete(name=name)
         raise RuntimeError(f"File {path.name} failed to process: state={uploaded.state}")
     return uploaded
 
 
-def _generate_analysis(client: genai.Client, uploaded: types.File) -> ClipAnalysisResult:
+def _analysis_prompt(duration_seconds: float) -> str:
+    return (
+        f"{PROMPT} The source video duration is exactly {duration_seconds:.3f} seconds. "
+        "Every start_time and end_time must fall inside that duration. "
+        "Do not invent timestamps past the end of the file."
+    )
+
+
+def _fit_segment(segment: Segment, duration: float) -> Segment | None:
+    """Clamp one cut into [0, duration] and keep it only if it is still 1.0–3.0s."""
+    if duration < 1.0:
+        return None
+    start = min(max(segment.start_time, 0.0), duration)
+    end = min(max(segment.end_time, 0.0), duration)
+    if end < start:
+        start, end = end, start
+    if end - start > 3.0:
+        end = min(duration, start + 3.0)
+        if end - start > 3.0:
+            start = max(0.0, end - 3.0)
+    if end - start < 1.0 or end - start > 3.0:
+        return None
+    try:
+        return Segment(
+            start_time=start,
+            end_time=end,
+            action_description=segment.action_description,
+        )
+    except ValueError:
+        return None
+
+
+def _constrain_analysis(result: ClipAnalysisResult, duration: float) -> ClipAnalysisResult:
+    kept: list[Segment] = []
+    for segment in result.segments:
+        fitted = _fit_segment(segment, duration)
+        if fitted is not None:
+            kept.append(fitted)
+    if len(kept) > 10:
+        kept = kept[:10]
+    if len(kept) < 5:
+        raise RuntimeError(
+            f"Only {len(kept)} highlight(s) stayed inside 1.0-3.0s of the {duration:.3f}s source"
+        )
+    return ClipAnalysisResult(
+        segments=kept,
+        visual_summary_hebrew=result.visual_summary_hebrew,
+    )
+
+
+def _generate_analysis(
+    client: genai.Client,
+    uploaded: types.File,
+    duration_seconds: float,
+) -> ClipAnalysisResult:
     max_attempts = len(RETRY_DELAYS) + 1
     last_error: Exception | None = None
+    prompt = _analysis_prompt(duration_seconds)
     for attempt in range(1, max_attempts + 1):
         try:
             response = client.models.generate_content(
                 model=MODEL,
-                contents=[uploaded, PROMPT],
+                contents=[uploaded, prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=ClipAnalysisResult,
@@ -127,15 +185,31 @@ def _generate_analysis(client: genai.Client, uploaded: types.File) -> ClipAnalys
 
 
 def analyze_clip_for_highlights(video_path: str) -> ClipAnalysisResult:
-    """Upload a raw clip, ask Gemini for highlight cuts, then delete the remote file."""
+    """Proxy the clip, ask Gemini for highlight cuts, then delete the proxy and the remote file."""
     if not GEMINI_API_KEY:
         raise SystemExit("GEMINI_API_KEY missing from backend/.env")
 
+    from services.video_engine import probe_duration, write_analysis_proxy
+
     source = _resolve_video_path(video_path)
+    duration = probe_duration(source)
+    print(f"  Source duration {duration:.3f}s, model {MODEL}")
+
+    fd, raw_name = tempfile.mkstemp(suffix=".mp4", prefix="clinicstudio_proxy_")
+    os.close(fd)
+    proxy_path = Path(raw_name)
     client = genai.Client(api_key=GEMINI_API_KEY)
-    uploaded = upload_and_wait(client, source)
+    uploaded: types.File | None = None
     try:
-        return _generate_analysis(client, uploaded)
+        write_analysis_proxy(source, proxy_path)
+        uploaded = upload_and_wait(client, proxy_path)
+        draft = _generate_analysis(client, uploaded, duration)
+        return _constrain_analysis(draft, duration)
     finally:
-        client.files.delete(name=uploaded.name)
-        print(f"  Cleaned up uploaded file {uploaded.name}")
+        if uploaded is not None and uploaded.name:
+            try:
+                client.files.delete(name=uploaded.name)
+                print(f"  Cleaned up uploaded file {uploaded.name}")
+            except Exception as cleanup_error:
+                print(f"  [warn] could not delete {uploaded.name}: {cleanup_error}")
+        proxy_path.unlink(missing_ok=True)
