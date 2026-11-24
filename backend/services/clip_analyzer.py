@@ -1,7 +1,4 @@
-"""Dynamic clip analyzer: Gemini proposes highlight timestamps for one raw clip.
-
-V2 additive service. It does not read or write the V1 blueprints table.
-"""
+"""Dynamic clip analyzer: Gemini proposes highlight timestamps for one raw clip."""
 import os
 import random
 import sys

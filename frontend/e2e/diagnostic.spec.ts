@@ -119,7 +119,7 @@ test("live diagnostic audit", async ({ page }) => {
     flowLog.push("Clicked toggle-manual-source: OK");
 
     const pathInput = page.getByTestId("source-path-input");
-    await pathInput.fill("references/treatment_flow/copy_C9E6677C-B027-40FA-81B1-64C1BCD9FB67.mp4", {
+    await pathInput.fill("raw_clips/clip.mp4", {
       timeout: 5000,
     });
     flowLog.push("Filled source-path-input: OK");

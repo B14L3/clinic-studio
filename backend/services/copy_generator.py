@@ -1,17 +1,14 @@
-"""Phase 3: Hebrew Copywriting Service.
+"""Hebrew copywriting for a rendered reel.
 
-Generates structured Hebrew social copy (on-screen hook, caption, CTA,
-hashtags) for a given treatment type via Claude, grounded in the active
-marketing rules in SQLite and optionally a blueprint's timing/pacing so
-on-screen text can be aligned to the edit.
+Generates a hook, caption, call to action, and hashtags via Claude, grounded in
+the active marketing rules in SQLite and the visual summary from clip analysis.
 """
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
-from anthropic import Anthropic, BadRequestError
+from anthropic import Anthropic
 from anthropic.types import Message
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -26,11 +23,9 @@ from services.clip_analyzer import Segment  # noqa: E402
 load_dotenv(BACKEND_DIR / ".env")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+# claude-sonnet-5-5 rejects forced tool_choice type "tool". tool_choice "auto"
+# plus an explicit tool instruction returns a valid ReelCopy with no 400.
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
-FALLBACK_MODEL = "claude-sonnet-4-6"
-# Models that rejected forced tool_choice in this process. claude-sonnet-5-5
-# returns 400: tool_choice type "tool" and "any" are not supported.
-_FORCED_TOOL_REJECTED: set[str] = set()
 
 COPY_TOOL = {
     "name": "generate_copy",
@@ -82,50 +77,18 @@ def _fetch_active_rules() -> list[str]:
     return [r["rule_text"] for r in rows]
 
 
-def _fetch_blueprint_timeline(blueprint_id: int) -> Optional[str]:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT data_json FROM blueprints WHERE id = ?", (blueprint_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if row is None:
-        print(f"  [warn] blueprint_id={blueprint_id} not found; continuing without timing context")
-        return None
-
-    bp = json.loads(row["data_json"])
-    segments = bp.get("segments", [])
-    timeline = "\n".join(
-        f"  {s['timestamp_start']}s-{s['timestamp_end']}s: {s['role']} - {s['suggested_action']}"
-        for s in segments
-    )
-    return f"Video duration={bp.get('total_duration')}s, pacing={bp.get('pacing')}\n{timeline}"
-
-
 def generate_reel_copy(
     treatment_type: str,
-    blueprint_id: Optional[int] = None,
-    extra_notes: Optional[str] = None,
-    visual_summary: Optional[str] = None,
-    segments: Optional[list[Segment]] = None,
+    extra_notes: str | None = None,
+    visual_summary: str | None = None,
+    segments: list[Segment] | None = None,
 ) -> ReelCopy:
-    """Generate structured Hebrew reel copy for a treatment, grounded in active SQLite rules.
-
-    V1 callers pass blueprint_id. V2 callers pass visual_summary plus the highlight
-    segments from clip analysis. Both can be omitted.
-    """
+    """Generate structured Hebrew reel copy for a treatment, grounded in active SQLite rules."""
     if not ANTHROPIC_API_KEY:
         raise SystemExit("ANTHROPIC_API_KEY missing from backend/.env")
 
     rules = _fetch_active_rules()
     rules_block = "\n".join(f"- {r}" for r in rules) if rules else "(no active rules defined)"
-
-    blueprint_block = ""
-    if blueprint_id is not None:
-        timeline = _fetch_blueprint_timeline(blueprint_id)
-        if timeline:
-            blueprint_block = f"\n\nAlign the on-screen hook timing to this edit:\n{timeline}"
 
     vision_block = ""
     if visual_summary and segments:
@@ -142,12 +105,11 @@ def generate_reel_copy(
     system_prompt = (
         "You are a Hebrew social media copywriter for a luxury esthetics clinic in Israel. "
         "Follow the marketing rules strictly and write only natural, native Israeli Hebrew "
-        "(never machine-translated). Call the generate_copy tool with your answer."
+        "(never machine-translated). You must call the generate_copy tool. Do not answer with prose."
     )
     user_prompt = (
         f"Treatment: {treatment_type}\n\n"
         f"Marketing rules to follow:\n{rules_block}"
-        f"{blueprint_block}"
         f"{vision_block}"
         f"{notes_block}\n\n"
         "Write the on-screen hook, caption, call-to-action, and hashtags for this treatment's reel."
@@ -155,38 +117,20 @@ def generate_reel_copy(
 
     client = Anthropic(api_key=ANTHROPIC_API_KEY)
     response = _create_copy_message(client, system_prompt, user_prompt)
-
-    tool_use = next(b for b in response.content if b.type == "tool_use")
+    tool_use = next((block for block in response.content if block.type == "tool_use"), None)
+    if tool_use is None or tool_use.name != "generate_copy":
+        raise RuntimeError("Claude did not call generate_copy")
     return ReelCopy.model_validate(tool_use.input)
 
 
 def _create_copy_message(client: Anthropic, system_prompt: str, user_prompt: str) -> Message:
-    """Call Claude with forced tool_choice. Fall back when a model rejects it with 400."""
-    model = FALLBACK_MODEL if MODEL in _FORCED_TOOL_REJECTED else MODEL
-    try:
-        return _messages_create(client, model, system_prompt, user_prompt)
-    except BadRequestError as exc:
-        if model == FALLBACK_MODEL:
-            raise
-        _FORCED_TOOL_REJECTED.add(model)
-        detail = getattr(exc, "message", None) or str(exc)
-        print(
-            f"  [warn] {model} rejected forced tool_choice "
-            f"(HTTP {getattr(exc, 'status_code', 400)}): {detail}. "
-            f"Falling back to {FALLBACK_MODEL}."
-        )
-        return _messages_create(client, FALLBACK_MODEL, system_prompt, user_prompt)
-
-
-def _messages_create(client: Anthropic, model: str, system_prompt: str, user_prompt: str) -> Message:
-    # Do not pass thinking={"type": "disabled"} — claude-sonnet-5-5 rejects it.
     return client.messages.create(
-        model=model,
+        model=MODEL,
         max_tokens=1024,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
         tools=[COPY_TOOL],
-        tool_choice={"type": "tool", "name": "generate_copy"},
+        tool_choice={"type": "auto"},
     )
 
 
@@ -195,9 +139,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Generate Hebrew reel copy for a treatment.")
     parser.add_argument("--treatment", type=str, default="טיפול זוהר והחדרת לחות")
-    parser.add_argument("--blueprint-id", type=int, default=None)
     parser.add_argument("--notes", type=str, default=None)
     args = parser.parse_args()
 
-    result = generate_reel_copy(args.treatment, args.blueprint_id, args.notes)
+    result = generate_reel_copy(args.treatment, extra_notes=args.notes)
     print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))

@@ -1,5 +1,4 @@
 """Reel pipeline endpoints: uploads, dynamic highlight analysis, and reel generation."""
-import json
 import re
 import sys
 import uuid
@@ -116,32 +115,6 @@ async def list_raw_clips() -> list[UploadResponse]:
         for f in files
         if f.is_file()
     ]
-
-
-@router.get("/blueprints")
-async def list_blueprints():
-    """Return all extracted blueprints: id, name, category, duration, segment count."""
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, name, category, data_json FROM blueprints ORDER BY id"
-        ).fetchall()
-    finally:
-        conn.close()
-
-    result = []
-    for r in rows:
-        data = json.loads(r["data_json"])
-        result.append(
-            {
-                "id": r["id"],
-                "name": r["name"],
-                "category": r["category"],
-                "duration": data.get("total_duration"),
-                "segment_count": len(data.get("segments", [])),
-            }
-        )
-    return result
 
 
 def _run_analyze(source_path: str) -> dict:

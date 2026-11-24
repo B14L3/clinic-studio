@@ -59,7 +59,7 @@ async function mockRawClips(page: Page) {
 async function analyzeFootage(page: Page) {
   await page.goto("/");
   await page.getByTestId("toggle-manual-source").click();
-  await page.getByTestId("source-path-input").fill("references/treatment_flow/clip.mp4");
+  await page.getByTestId("source-path-input").fill("raw_clips/clip.mp4");
   await page.getByTestId("analyze-button").click();
   await expect(page.getByTestId("visual-summary")).toBeVisible();
 }
@@ -68,14 +68,20 @@ test("initial state displays source input and analyze button", async ({ page }) 
   await mockRawClips(page);
   await page.goto("/");
 
-  await expect(page.getByTestId("upload-button")).toBeVisible();
+  await expect(page.getByTestId("upload-button")).toContainText(
+    "בחרי סרטון מהטלפון / מגלריית התמונות",
+  );
   await expect(page.getByTestId("toggle-manual-source")).toBeVisible();
 
   await expect(page.getByTestId("source-path-input")).toHaveCount(0);
   await page.getByTestId("toggle-manual-source").click();
   await expect(page.getByTestId("source-path-input")).toBeVisible();
 
-  await expect(page.getByTestId("analyze-button")).toBeVisible();
+  await expect(page.getByTestId("analyze-button")).toContainText("נתחי סרטון עם AI");
+  await expect(page.getByTestId("source-path-input")).toHaveAttribute(
+    "placeholder",
+    "raw_clips/clip.mp4",
+  );
   await expect(page.getByTestId("visual-summary")).toHaveCount(0);
   await expect(page.getByTestId("segment-start-0")).toHaveCount(0);
 });
@@ -151,7 +157,7 @@ test("analyze keeps polling while the job is still running", async ({ page }) =>
 
   await page.goto("/");
   await page.getByTestId("toggle-manual-source").click();
-  await page.getByTestId("source-path-input").fill("references/treatment_flow/clip.mp4");
+  await page.getByTestId("source-path-input").fill("raw_clips/clip.mp4");
   await page.getByTestId("analyze-button").click();
   await expect(page.getByTestId("analyze-job-status")).toContainText("הניתוח רץ");
   await expect(page.getByTestId("visual-summary")).toBeVisible();

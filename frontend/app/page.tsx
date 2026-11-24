@@ -336,18 +336,14 @@ export default function StudioDashboard() {
             type="file"
             accept="video/*,video/mp4,video/quicktime"
             data-testid="file-input"
-            className="hidden"
+            className="sr-only"
             disabled={uploading}
             onChange={handleFileSelect}
           />
 
           {/*
-            A native <label for=...> is used instead of a button that proxies
-            a programmatic .click() on the hidden input. iOS Safari frequently
-            refuses to open the native photo/file picker when .click() is
-            called via JS on a display:none input, even from a real tap
-            handler — but tapping a label associated with a file input is
-            spec-guaranteed to activate it on every browser, including iOS.
+            A native <label for=...> activates the file input. The input stays
+            sr-only rather than display:none so iOS Safari still opens the picker.
           */}
           <label
             htmlFor="raw-clip-file-input"
@@ -365,7 +361,7 @@ export default function StudioDashboard() {
             ) : (
               <>
                 <UploadCloud className="w-6 h-6" />
-                <span>Select Video from Device / Photo Library</span>
+                <span>בחרי סרטון מהטלפון / מגלריית התמונות</span>
               </>
             )}
           </label>
@@ -447,7 +443,7 @@ export default function StudioDashboard() {
                     value={sourcePath}
                     onChange={(e) => setSourcePath(e.target.value)}
                     className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-300"
-                    placeholder="references/treatment_flow/clip.mp4"
+                    placeholder="raw_clips/clip.mp4"
                   />
                 </div>
               </div>
@@ -459,7 +455,7 @@ export default function StudioDashboard() {
             data-testid="analyze-button"
             onClick={() => handleAnalyze()}
             disabled={analyzing || !sourcePath}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-500 text-white py-3 font-medium disabled:opacity-40 hover:bg-rose-600 transition"
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-500 text-white py-3 font-medium hover:bg-rose-600 disabled:bg-zinc-200 disabled:text-zinc-500 disabled:hover:bg-zinc-200 transition"
           >
             {analyzing ? (
               <>
@@ -467,7 +463,7 @@ export default function StudioDashboard() {
               </>
             ) : (
               <>
-                <ScanSearch className="w-4 h-4" /> Analyze Footage with AI
+                <ScanSearch className="w-4 h-4" /> נתחי סרטון עם AI
               </>
             )}
           </button>
